@@ -97,6 +97,9 @@ export default function LeadEngine() {
   // Scraper modal
   const [showScraper, setShowScraper] = React.useState(false);
 
+  // Scanner modal
+  const [showScanner, setShowScanner] = React.useState(false);
+
   // Chat state
   const [chatMessages, setChatMessages] = React.useState<Array<{role: 'user' | 'assistant'; content: string}>>([]);
   const [chatInput, setChatInput] = React.useState('');
@@ -353,6 +356,10 @@ export default function LeadEngine() {
           e.preventDefault();
           setShowScraper(true);
           break;
+        case 'q':
+          e.preventDefault();
+          setShowScanner(true);
+          break;
       }
     };
 
@@ -464,6 +471,13 @@ export default function LeadEngine() {
               <option value="">Priority</option>
               {priorities.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
+
+            <button
+              onClick={() => setShowScanner(true)}
+              className="h-8 px-3 bg-zinc-800/50 border border-zinc-700/50 rounded-md text-[13px] text-zinc-400 hover:text-white hover:border-zinc-600 transition-colors flex items-center gap-1.5"
+            >
+              <IconRadar className="w-3.5 h-3.5" /> Scanner
+            </button>
 
             <button
               onClick={() => setShowScraper(true)}
@@ -687,6 +701,11 @@ export default function LeadEngine() {
       {/* Scraper Modal */}
       {showScraper && (
         <ScraperModal onClose={() => setShowScraper(false)} />
+      )}
+
+      {/* Scanner Modal */}
+      {showScanner && (
+        <ScannerModal onClose={() => setShowScanner(false)} onSelectLead={handleSelectLead} />
       )}
     </div>
   );
@@ -1127,6 +1146,174 @@ function ScraperModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Scanner Modal - Lead quality dashboard
+function ScannerModal({ onClose, onSelectLead }: { onClose: () => void; onSelectLead: (lead: Lead) => void }) {
+  const [loading, setLoading] = React.useState(true);
+  const [data, setData] = React.useState<any>(null);
+  const [activeSection, setActiveSection] = React.useState<'hot' | 'warm' | 'stats'>('hot');
+
+  React.useEffect(() => {
+    async function scan() {
+      try {
+        const res = await fetch('/api/scan-leads');
+        const result = await res.json();
+        if (result.success) {
+          setData(result);
+        }
+      } catch (e) {
+        console.error('Scan failed:', e);
+      }
+      setLoading(false);
+    }
+    scan();
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={onClose}>
+      <div className="w-[700px] max-h-[80vh] bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+          <div>
+            <h2 className="text-[15px] font-semibold text-white flex items-center gap-2">
+              <IconRadar className="w-5 h-5 text-emerald-400" /> Lead Scanner
+            </h2>
+            <p className="text-[12px] text-zinc-500 mt-0.5">Auto-ranked by RLTX fit score</p>
+          </div>
+          <button onClick={onClose} className="text-zinc-500 hover:text-white p-1">
+            <IconX className="w-5 h-5" />
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex-1 flex items-center justify-center py-12">
+            <Spinner /> <span className="ml-2 text-zinc-400">Scanning leads...</span>
+          </div>
+        ) : data ? (
+          <>
+            {/* Stats Bar */}
+            <div className="grid grid-cols-5 gap-2 p-4 border-b border-zinc-800 bg-zinc-800/30">
+              <StatBox label="Total" value={data.stats.total} />
+              <StatBox label="Hot" value={data.stats.byTier.hot} color="text-red-400" />
+              <StatBox label="Warm" value={data.stats.byTier.warm} color="text-orange-400" />
+              <StatBox label="Enriched" value={data.stats.enriched} color="text-emerald-400" />
+              <StatBox label="Pending" value={data.stats.pending} color="text-zinc-400" />
+            </div>
+
+            {/* Tabs */}
+            <div className="flex gap-1 px-4 pt-3 pb-2 border-b border-zinc-800/50">
+              {(['hot', 'warm', 'stats'] as const).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveSection(tab)}
+                  className={`px-3 py-1.5 text-[12px] font-medium rounded-md transition-colors ${
+                    activeSection === tab ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white'
+                  }`}
+                >
+                  {tab === 'hot' ? `Hot Leads (${data.stats.byTier.hot})` :
+                   tab === 'warm' ? `Warm Leads (${data.stats.byTier.warm})` :
+                   'Analytics'}
+                </button>
+              ))}
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-auto p-4">
+              {activeSection === 'stats' ? (
+                <div className="space-y-4">
+                  <div>
+                    <div className="text-[11px] text-zinc-500 uppercase tracking-wider mb-2">Top Sectors</div>
+                    <div className="space-y-1">
+                      {data.stats.topSectors.map(([sector, count]: [string, number]) => (
+                        <div key={sector} className="flex items-center justify-between text-[13px]">
+                          <span className="text-zinc-300">{sector}</span>
+                          <span className="text-zinc-500">{count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="p-4 bg-zinc-800/50 rounded-lg">
+                    <div className="text-[12px] text-zinc-400 mb-2">Quality Distribution</div>
+                    <div className="flex gap-1 h-4 rounded overflow-hidden">
+                      <div className="bg-red-500" style={{ width: `${(data.stats.byTier.hot / data.stats.total) * 100}%` }} />
+                      <div className="bg-orange-500" style={{ width: `${(data.stats.byTier.warm / data.stats.total) * 100}%` }} />
+                      <div className="bg-yellow-500" style={{ width: `${(data.stats.byTier.medium / data.stats.total) * 100}%` }} />
+                      <div className="bg-zinc-600" style={{ width: `${(data.stats.byTier.low / data.stats.total) * 100}%` }} />
+                    </div>
+                    <div className="flex justify-between mt-2 text-[10px] text-zinc-500">
+                      <span>Hot: {Math.round((data.stats.byTier.hot / data.stats.total) * 100)}%</span>
+                      <span>Warm: {Math.round((data.stats.byTier.warm / data.stats.total) * 100)}%</span>
+                      <span>Medium: {Math.round((data.stats.byTier.medium / data.stats.total) * 100)}%</span>
+                      <span>Low: {Math.round((data.stats.byTier.low / data.stats.total) * 100)}%</span>
+                    </div>
+                  </div>
+
+                  <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                    <div className="text-[12px] text-amber-400 font-medium mb-1">Free Data Sources Available</div>
+                    <div className="text-[11px] text-amber-200/70 space-y-1">
+                      <div>• SEC EDGAR: 10,301 public companies (downloaded)</div>
+                      <div>• Wikidata: 140,690 companies (downloaded)</div>
+                      <div>• OpenData500: 814 companies (downloaded)</div>
+                      <div>• USASpending: Government contractors (API ready)</div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {(activeSection === 'hot' ? data.hotLeads : data.warmLeads).map((lead: any) => (
+                    <div
+                      key={lead.id}
+                      onClick={() => {
+                        onSelectLead(lead as Lead);
+                        onClose();
+                      }}
+                      className="p-3 bg-zinc-800/50 hover:bg-zinc-800 rounded-lg cursor-pointer transition-colors"
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-medium text-white text-[13px]">{lead.company}</span>
+                        <span className={`text-[12px] font-mono ${
+                          lead.score >= 60 ? 'text-red-400' :
+                          lead.score >= 40 ? 'text-orange-400' : 'text-yellow-400'
+                        }`}>
+                          {lead.score}/100
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+                        <span>{lead.sector}</span>
+                        {lead.revenue && <span>• ${lead.revenue}B</span>}
+                        {lead.enriched && <span className="text-emerald-400">• Enriched</span>}
+                      </div>
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {lead.reasons.slice(0, 3).map((r: string, i: number) => (
+                          <span key={i} className="px-1.5 py-0.5 bg-zinc-700 text-zinc-300 rounded text-[10px]">
+                            {r}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 flex items-center justify-center py-12 text-zinc-500">
+            Failed to load scanner data
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StatBox({ label, value, color = 'text-white' }: { label: string; value: number; color?: string }) {
+  return (
+    <div className="text-center">
+      <div className={`text-[20px] font-semibold ${color}`}>{value.toLocaleString()}</div>
+      <div className="text-[10px] text-zinc-500 uppercase tracking-wider">{label}</div>
     </div>
   );
 }
