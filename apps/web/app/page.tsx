@@ -61,85 +61,15 @@ type EnrichmentData = {
   };
 };
 
-const COLUMN_GROUPS = [
-  {
-    id: 'base',
-    label: 'Company Info',
-    columns: [
-      { id: 'company', label: 'Company', width: 200, sticky: true },
-      { id: 'sector', label: 'Sector', width: 140 },
-      { id: 'subSector', label: 'Sub-Sector', width: 120 },
-      { id: 'location', label: 'Location', width: 140 },
-      { id: 'website', label: 'Website', width: 160 },
-      { id: 'revenue', label: 'Revenue', width: 90 },
-      { id: 'employees', label: 'Employees', width: 100 },
-      { id: 'priority', label: 'Priority', width: 90 },
-    ],
-  },
-  {
-    id: 'context',
-    label: 'Context',
-    columns: [
-      { id: 'source', label: 'Source', width: 120 },
-      { id: 'useCase', label: 'Use Case', width: 200 },
-      { id: 'titles', label: 'Target Titles', width: 180 },
-    ],
-  },
-  {
-    id: 'enrichment',
-    label: 'AI Enrichment',
-    columns: [
-      { id: 'enrichStatus', label: 'Status', width: 100 },
-      { id: 'description', label: 'Description', width: 280 },
-      { id: 'businessModel', label: 'Business Model', width: 180 },
-      { id: 'marketPosition', label: 'Market Position', width: 120 },
-      { id: 'primaryProduct', label: 'RLTX Product', width: 120 },
-      { id: 'valueProposition', label: 'Value Prop', width: 240 },
-      { id: 'estimatedImpact', label: 'Est. Impact', width: 180 },
-    ],
-  },
-  {
-    id: 'outreach',
-    label: 'Outreach',
-    columns: [
-      { id: 'hook', label: 'Opening Hook', width: 280 },
-      { id: 'channel', label: 'Channel', width: 90 },
-      { id: 'timing', label: 'Timing', width: 140 },
-      { id: 'emailPattern', label: 'Email Pattern', width: 180 },
-    ],
-  },
-  {
-    id: 'deal',
-    label: 'Deal Intel',
-    columns: [
-      { id: 'dealSize', label: 'Deal Size', width: 120 },
-      { id: 'salesCycle', label: 'Sales Cycle', width: 100 },
-      { id: 'budget', label: 'Budget', width: 140 },
-      { id: 'switchingCosts', label: 'Switching Costs', width: 110 },
-    ],
-  },
-  {
-    id: 'scores',
-    label: 'Scores',
-    columns: [
-      { id: 'fitScore', label: 'Fit', width: 60 },
-      { id: 'urgencyScore', label: 'Urgency', width: 70 },
-      { id: 'accessScore', label: 'Access', width: 70 },
-      { id: 'overallPriority', label: 'AI Priority', width: 100 },
-    ],
-  },
-];
-
-export default function DatabaseView() {
+export default function LeadEngine() {
   const [leads, setLeads] = React.useState<Lead[]>(leadsData as Lead[]);
   const [search, setSearch] = React.useState('');
   const [sectorFilter, setSectorFilter] = React.useState<string | null>(null);
   const [priorityFilter, setPriorityFilter] = React.useState<string | null>(null);
   const [enrichingIds, setEnrichingIds] = React.useState<Set<string>>(new Set());
-  const [selectedRows, setSelectedRows] = React.useState<Set<string>>(new Set());
-  const [expandedRow, setExpandedRow] = React.useState<string | null>(null);
+  const [selectedLead, setSelectedLead] = React.useState<Lead | null>(null);
   const [activeTab, setActiveTab] = React.useState<'all' | 'enriched' | 'pending'>('all');
-  const tableRef = React.useRef<HTMLDivElement>(null);
+  const [detailTab, setDetailTab] = React.useState<'overview' | 'callprep' | 'intel'>('overview');
 
   const sectors = [...new Set(leadsData.map(l => l.sector))].sort();
   const priorities = ['Critical', 'High', 'Medium', 'Low'];
@@ -150,7 +80,6 @@ export default function DatabaseView() {
         lead.company.toLowerCase().includes(search.toLowerCase()) ||
         lead.sector.toLowerCase().includes(search.toLowerCase()) ||
         lead.useCase?.toLowerCase().includes(search.toLowerCase()) ||
-        lead.titles?.toLowerCase().includes(search.toLowerCase()) ||
         lead.city?.toLowerCase().includes(search.toLowerCase());
       const matchesSector = !sectorFilter || lead.sector === sectorFilter;
       const matchesPriority = !priorityFilter || lead.priority === priorityFilter;
@@ -163,11 +92,8 @@ export default function DatabaseView() {
 
   const enrichedCount = leads.filter(l => l.enrichment).length;
 
-  const handleEnrich = async (leadId: string) => {
-    const lead = leads.find(l => l.id === leadId);
-    if (!lead) return;
-
-    setEnrichingIds(prev => new Set(prev).add(leadId));
+  const handleEnrich = async (lead: Lead) => {
+    setEnrichingIds(prev => new Set(prev).add(lead.id));
 
     try {
       const res = await fetch('/api/enrich-lead', {
@@ -177,11 +103,9 @@ export default function DatabaseView() {
       });
       const data = await res.json();
       if (data.success) {
-        setLeads(prev => prev.map(l =>
-          l.id === leadId
-            ? { ...l, enrichment: data.data, enrichedAt: data.enrichedAt }
-            : l
-        ));
+        const updatedLead = { ...lead, enrichment: data.data, enrichedAt: data.enrichedAt };
+        setLeads(prev => prev.map(l => l.id === lead.id ? updatedLead : l));
+        setSelectedLead(updatedLead);
       }
     } catch (e) {
       console.error('Enrich failed:', e);
@@ -189,580 +113,668 @@ export default function DatabaseView() {
 
     setEnrichingIds(prev => {
       const next = new Set(prev);
-      next.delete(leadId);
+      next.delete(lead.id);
       return next;
     });
   };
 
-  const handleBulkEnrich = async () => {
-    const toEnrich = Array.from(selectedRows).filter(id => {
-      const lead = leads.find(l => l.id === id);
-      return lead && !lead.enrichment;
-    });
-    for (const id of toEnrich) {
-      await handleEnrich(id);
-    }
-  };
-
-  const getCellValue = (lead: Lead, columnId: string): React.ReactNode => {
-    const e = lead.enrichment;
-
-    switch (columnId) {
-      case 'company':
-        return lead.company;
-      case 'sector':
-        return <span className="text-zinc-300">{lead.sector}</span>;
-      case 'subSector':
-        return lead.subSector || <span className="text-zinc-600">—</span>;
-      case 'location':
-        return `${lead.city || ''}${lead.state ? `, ${lead.state}` : ''}` || <span className="text-zinc-600">—</span>;
-      case 'website':
-        return lead.website ? (
-          <a href={`https://${lead.website}`} target="_blank" className="text-blue-400 hover:underline truncate block">
-            {lead.website}
-          </a>
-        ) : <span className="text-zinc-600">—</span>;
-      case 'revenue':
-        return lead.revenue ? (
-          <span className="text-emerald-400 font-mono">${lead.revenue}B</span>
-        ) : <span className="text-zinc-600">—</span>;
-      case 'employees':
-        return lead.employees ? (
-          <span className="font-mono text-zinc-300">{lead.employees.toLocaleString()}</span>
-        ) : <span className="text-zinc-600">—</span>;
-      case 'priority':
-        return <PriorityBadge priority={lead.priority} />;
-      case 'source':
-        return lead.source || <span className="text-zinc-600">—</span>;
-      case 'useCase':
-        return lead.useCase ? (
-          <span className="text-zinc-300 truncate block" title={lead.useCase}>{lead.useCase}</span>
-        ) : <span className="text-zinc-600">—</span>;
-      case 'titles':
-        return lead.titles || <span className="text-zinc-600">—</span>;
-      case 'enrichStatus':
-        if (enrichingIds.has(lead.id)) {
-          return <span className="text-amber-400 flex items-center gap-1"><Spinner /> Enriching</span>;
-        }
-        return e ? (
-          <span className="text-emerald-400 flex items-center gap-1">
-            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-            </svg>
-            Enriched
-          </span>
-        ) : (
-          <button
-            onClick={(ev) => { ev.stopPropagation(); handleEnrich(lead.id); }}
-            className="text-xs bg-zinc-700 hover:bg-zinc-600 px-2 py-1 rounded transition-colors"
-          >
-            Enrich
-          </button>
-        );
-      case 'description':
-        return e?.companyOverview?.description || <span className="text-zinc-600">—</span>;
-      case 'businessModel':
-        return e?.companyOverview?.businessModel || <span className="text-zinc-600">—</span>;
-      case 'marketPosition':
-        return e?.companyOverview?.marketPosition ? (
-          <PositionBadge position={e.companyOverview.marketPosition} />
-        ) : <span className="text-zinc-600">—</span>;
-      case 'primaryProduct':
-        return e?.rltxFit?.primaryProduct ? (
-          <ProductBadge product={e.rltxFit.primaryProduct} />
-        ) : <span className="text-zinc-600">—</span>;
-      case 'valueProposition':
-        return e?.rltxFit?.valueProposition || <span className="text-zinc-600">—</span>;
-      case 'estimatedImpact':
-        return e?.rltxFit?.estimatedImpact ? (
-          <span className="text-emerald-400">{e.rltxFit.estimatedImpact}</span>
-        ) : <span className="text-zinc-600">—</span>;
-      case 'hook':
-        return e?.outreachStrategy?.hook ? (
-          <span className="text-zinc-300 italic truncate block" title={e.outreachStrategy.hook}>
-            "{e.outreachStrategy.hook}"
-          </span>
-        ) : <span className="text-zinc-600">—</span>;
-      case 'channel':
-        return e?.outreachStrategy?.channel ? (
-          <ChannelBadge channel={e.outreachStrategy.channel} />
-        ) : <span className="text-zinc-600">—</span>;
-      case 'timing':
-        return e?.outreachStrategy?.timing || <span className="text-zinc-600">—</span>;
-      case 'emailPattern':
-        return e?.contacts?.emailPatterns?.[0] ? (
-          <span className="font-mono text-xs text-zinc-400">{e.contacts.emailPatterns[0]}</span>
-        ) : <span className="text-zinc-600">—</span>;
-      case 'dealSize':
-        return e?.dealIntel?.estimatedDealSize ? (
-          <span className="text-emerald-400 font-mono">{e.dealIntel.estimatedDealSize}</span>
-        ) : <span className="text-zinc-600">—</span>;
-      case 'salesCycle':
-        return e?.dealIntel?.salesCycle || <span className="text-zinc-600">—</span>;
-      case 'budget':
-        return e?.dealIntel?.budget || <span className="text-zinc-600">—</span>;
-      case 'switchingCosts':
-        return e?.competitiveIntel?.switchingCosts ? (
-          <SwitchingCostBadge cost={e.competitiveIntel.switchingCosts} />
-        ) : <span className="text-zinc-600">—</span>;
-      case 'fitScore':
-        return e?.score?.fitScore !== undefined ? (
-          <ScoreCell value={e.score.fitScore} />
-        ) : <span className="text-zinc-600">—</span>;
-      case 'urgencyScore':
-        return e?.score?.urgencyScore !== undefined ? (
-          <ScoreCell value={e.score.urgencyScore} />
-        ) : <span className="text-zinc-600">—</span>;
-      case 'accessScore':
-        return e?.score?.accessibilityScore !== undefined ? (
-          <ScoreCell value={e.score.accessibilityScore} />
-        ) : <span className="text-zinc-600">—</span>;
-      case 'overallPriority':
-        return e?.score?.overallPriority ? (
-          <PriorityBadge priority={e.score.overallPriority} />
-        ) : <span className="text-zinc-600">—</span>;
-      default:
-        return <span className="text-zinc-600">—</span>;
-    }
-  };
-
-  const toggleRowSelection = (id: string) => {
-    setSelectedRows(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  };
-
-  const toggleSelectAll = () => {
-    if (selectedRows.size === filteredLeads.length) {
-      setSelectedRows(new Set());
-    } else {
-      setSelectedRows(new Set(filteredLeads.map(l => l.id)));
-    }
+  const handleSelectLead = (lead: Lead) => {
+    setSelectedLead(lead);
+    setDetailTab('overview');
   };
 
   return (
-    <div className="h-screen flex flex-col bg-[#09090b] text-zinc-100">
-      {/* Top Bar */}
-      <header className="flex-shrink-0 border-b border-zinc-800 bg-[#09090b]">
-        <div className="flex items-center justify-between px-4 h-14">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 bg-gradient-to-br from-violet-500 to-indigo-600 rounded flex items-center justify-center text-xs font-bold">
-                R
-              </div>
-              <span className="font-semibold text-white">RLTX</span>
-              <span className="text-zinc-500">/</span>
-              <span className="text-zinc-400">leads</span>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 text-sm">
-            <span className="text-zinc-500">{leads.length.toLocaleString()} records</span>
-            <span className="text-zinc-700">|</span>
-            <span className="text-emerald-500">{enrichedCount} enriched</span>
+    <div className="h-screen flex bg-[#0a0a0a] text-zinc-100 font-['Inter',system-ui,sans-serif]">
+      {/* Sidebar */}
+      <aside className="w-56 border-r border-zinc-800/50 flex flex-col">
+        {/* Logo */}
+        <div className="h-14 flex items-center px-4 border-b border-zinc-800/50">
+          <div className="flex items-center gap-2.5">
+            <div className="w-6 h-6 bg-gradient-to-br from-violet-500 to-indigo-600 rounded-md" />
+            <span className="font-semibold text-[15px] text-white tracking-tight">RLTX</span>
           </div>
         </div>
-      </header>
 
-      {/* Toolbar */}
-      <div className="flex-shrink-0 border-b border-zinc-800 bg-zinc-900/50">
-        <div className="flex items-center gap-2 px-4 py-2">
-          {/* Tabs */}
-          <div className="flex items-center bg-zinc-800/50 rounded-lg p-0.5">
-            {(['all', 'enriched', 'pending'] as const).map(tab => (
+        {/* Nav */}
+        <nav className="flex-1 p-2">
+          <div className="space-y-0.5">
+            <NavItem icon={<IconDatabase />} label="Leads" active count={leads.length} />
+            <NavItem icon={<IconSparkles />} label="Enriched" count={enrichedCount} onClick={() => setActiveTab('enriched')} />
+            <NavItem icon={<IconClock />} label="Pending" count={leads.length - enrichedCount} onClick={() => setActiveTab('pending')} />
+          </div>
+
+          <div className="mt-6 pt-4 border-t border-zinc-800/50">
+            <div className="px-2 mb-2 text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Sectors</div>
+            <div className="space-y-0.5 max-h-64 overflow-auto">
               <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  activeTab === tab
-                    ? 'bg-zinc-700 text-white'
-                    : 'text-zinc-400 hover:text-white'
+                onClick={() => setSectorFilter(null)}
+                className={`w-full text-left px-2 py-1.5 rounded-md text-[13px] transition-colors ${
+                  !sectorFilter ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
                 }`}
               >
-                {tab === 'all' ? `All (${leads.length})` :
-                 tab === 'enriched' ? `Enriched (${enrichedCount})` :
-                 `Pending (${leads.length - enrichedCount})`}
+                All Sectors
               </button>
-            ))}
-          </div>
-
-          <div className="w-px h-6 bg-zinc-700 mx-2" />
-
-          {/* Search */}
-          <div className="relative flex-1 max-w-md">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input
-              type="text"
-              placeholder="Search companies, sectors, locations..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full bg-zinc-800/50 border border-zinc-700 rounded-lg pl-10 pr-4 py-2 text-sm focus:outline-none focus:border-zinc-500 placeholder-zinc-500"
-            />
-          </div>
-
-          {/* Filters */}
-          <select
-            value={sectorFilter || ''}
-            onChange={(e) => setSectorFilter(e.target.value || null)}
-            className="bg-zinc-800/50 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-zinc-500"
-          >
-            <option value="">All Sectors</option>
-            {sectors.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-
-          <select
-            value={priorityFilter || ''}
-            onChange={(e) => setPriorityFilter(e.target.value || null)}
-            className="bg-zinc-800/50 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-zinc-500"
-          >
-            <option value="">All Priorities</option>
-            {priorities.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
-
-          {(search || sectorFilter || priorityFilter) && (
-            <button
-              onClick={() => { setSearch(''); setSectorFilter(null); setPriorityFilter(null); }}
-              className="text-xs text-zinc-500 hover:text-white px-2"
-            >
-              Clear
-            </button>
-          )}
-
-          <div className="flex-1" />
-
-          {/* Bulk Actions */}
-          {selectedRows.size > 0 && (
-            <div className="flex items-center gap-2 bg-indigo-500/10 border border-indigo-500/30 rounded-lg px-3 py-1.5">
-              <span className="text-sm text-indigo-400">{selectedRows.size} selected</span>
-              <button
-                onClick={handleBulkEnrich}
-                className="text-xs bg-indigo-600 hover:bg-indigo-500 px-2 py-1 rounded transition-colors"
-              >
-                Bulk Enrich
-              </button>
-              <button
-                onClick={() => setSelectedRows(new Set())}
-                className="text-xs text-zinc-400 hover:text-white"
-              >
-                Clear
-              </button>
+              {sectors.slice(0, 12).map(s => (
+                <button
+                  key={s}
+                  onClick={() => setSectorFilter(sectorFilter === s ? null : s)}
+                  className={`w-full text-left px-2 py-1.5 rounded-md text-[13px] truncate transition-colors ${
+                    sectorFilter === s ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
             </div>
-          )}
-        </div>
-      </div>
+          </div>
+        </nav>
 
-      {/* Table */}
-      <div className="flex-1 overflow-hidden">
-        <div ref={tableRef} className="h-full overflow-auto">
-          <table className="w-full border-collapse text-sm">
-            {/* Column Group Headers */}
-            <thead className="sticky top-0 z-20">
-              <tr className="bg-zinc-900 border-b border-zinc-800">
-                <th className="sticky left-0 z-30 bg-zinc-900 w-10 px-3 py-2 border-r border-zinc-800">
-                  <input
-                    type="checkbox"
-                    checked={selectedRows.size === filteredLeads.length && filteredLeads.length > 0}
-                    onChange={toggleSelectAll}
-                    className="rounded border-zinc-600 bg-zinc-800 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0"
-                  />
-                </th>
-                {COLUMN_GROUPS.map((group, gi) => (
-                  <th
-                    key={group.id}
-                    colSpan={group.columns.length}
-                    className={`px-3 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wider ${
-                      gi % 2 === 0 ? 'bg-zinc-900' : 'bg-zinc-900/80'
-                    } ${gi === 0 ? 'sticky left-10 z-20' : ''}`}
-                    style={gi === 0 ? { left: 40, minWidth: group.columns.reduce((a, c) => a + c.width, 0) } : undefined}
-                  >
-                    <span className={
-                      group.id === 'enrichment' ? 'text-indigo-400' :
-                      group.id === 'outreach' ? 'text-amber-400' :
-                      group.id === 'deal' ? 'text-emerald-400' :
-                      group.id === 'scores' ? 'text-violet-400' :
-                      'text-zinc-500'
-                    }>
-                      {group.label}
-                    </span>
-                  </th>
-                ))}
-              </tr>
-              {/* Column Headers */}
-              <tr className="bg-zinc-800/80 border-b border-zinc-700">
-                <th className="sticky left-0 z-30 bg-zinc-800/80 w-10 border-r border-zinc-700" />
-                {COLUMN_GROUPS.map((group, gi) => (
-                  group.columns.map((col, ci) => (
-                    <th
-                      key={col.id}
-                      className={`px-3 py-2 text-left text-xs font-medium text-zinc-400 border-r border-zinc-700/50 ${
-                        col.sticky ? 'sticky z-20 bg-zinc-800/80' : ''
-                      }`}
-                      style={{
-                        width: col.width,
-                        minWidth: col.width,
-                        maxWidth: col.width,
-                        ...(col.sticky ? { left: 40 } : {}),
-                      }}
-                    >
-                      {col.label}
-                    </th>
-                  ))
-                ))}
+        {/* Bottom */}
+        <div className="p-3 border-t border-zinc-800/50">
+          <div className="flex items-center gap-2 px-2 py-1.5 text-[13px] text-zinc-400">
+            <div className="w-2 h-2 rounded-full bg-emerald-500" />
+            <span>{enrichingIds.size > 0 ? `Enriching ${enrichingIds.size}...` : 'Ready'}</span>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col min-w-0">
+        {/* Top Bar */}
+        <header className="h-14 flex items-center justify-between px-4 border-b border-zinc-800/50">
+          <div className="flex items-center gap-3">
+            <h1 className="text-[15px] font-medium text-white">Leads</h1>
+            <div className="flex items-center bg-zinc-800/50 rounded-md p-0.5">
+              {(['all', 'enriched', 'pending'] as const).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-2.5 py-1 text-[12px] font-medium rounded transition-colors ${
+                    activeTab === tab ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white'
+                  }`}
+                >
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Search */}
+            <div className="relative">
+              <IconSearch className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+              <input
+                type="text"
+                placeholder="Search..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-56 bg-zinc-800/50 border border-zinc-700/50 rounded-md pl-8 pr-3 py-1.5 text-[13px] focus:outline-none focus:border-zinc-600 placeholder-zinc-500"
+              />
+              {search && (
+                <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white">
+                  <IconX className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+
+            {/* Priority Filter */}
+            <select
+              value={priorityFilter || ''}
+              onChange={(e) => setPriorityFilter(e.target.value || null)}
+              className="bg-zinc-800/50 border border-zinc-700/50 rounded-md px-2.5 py-1.5 text-[13px] focus:outline-none focus:border-zinc-600"
+            >
+              <option value="">Priority</option>
+              {priorities.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+        </header>
+
+        {/* Table */}
+        <div className="flex-1 overflow-auto">
+          <table className="w-full text-[13px]">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-zinc-900/95 backdrop-blur border-b border-zinc-800/50 text-left">
+                <th className="font-medium text-zinc-400 px-4 py-2.5 w-[280px]">Company</th>
+                <th className="font-medium text-zinc-400 px-4 py-2.5 w-[140px]">Sector</th>
+                <th className="font-medium text-zinc-400 px-4 py-2.5 w-[120px]">Location</th>
+                <th className="font-medium text-zinc-400 px-4 py-2.5 w-[90px]">Revenue</th>
+                <th className="font-medium text-zinc-400 px-4 py-2.5 w-[90px]">Priority</th>
+                <th className="font-medium text-zinc-400 px-4 py-2.5 w-[100px]">Status</th>
+                <th className="font-medium text-zinc-400 px-4 py-2.5">RLTX Fit</th>
               </tr>
             </thead>
             <tbody>
-              {filteredLeads.map((lead, ri) => (
-                <React.Fragment key={lead.id}>
-                  <tr
-                    className={`border-b border-zinc-800/50 transition-colors ${
-                      selectedRows.has(lead.id) ? 'bg-indigo-500/10' :
-                      expandedRow === lead.id ? 'bg-zinc-800/50' :
-                      ri % 2 === 0 ? 'bg-zinc-900/30' : 'bg-zinc-900/10'
-                    } hover:bg-zinc-800/50 cursor-pointer`}
-                    onClick={() => setExpandedRow(expandedRow === lead.id ? null : lead.id)}
-                  >
-                    <td
-                      className="sticky left-0 z-10 bg-inherit w-10 px-3 py-2 border-r border-zinc-800"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedRows.has(lead.id)}
-                        onChange={() => toggleRowSelection(lead.id)}
-                        className="rounded border-zinc-600 bg-zinc-800 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0"
-                      />
-                    </td>
-                    {COLUMN_GROUPS.map((group) => (
-                      group.columns.map((col) => (
-                        <td
-                          key={col.id}
-                          className={`px-3 py-2 truncate border-r border-zinc-800/30 ${
-                            col.sticky ? 'sticky z-10 bg-inherit font-medium text-white' : ''
-                          }`}
-                          style={{
-                            width: col.width,
-                            minWidth: col.width,
-                            maxWidth: col.width,
-                            ...(col.sticky ? { left: 40 } : {}),
-                          }}
-                          onClick={(e) => col.id === 'enrichStatus' ? e.stopPropagation() : null}
-                        >
-                          {getCellValue(lead, col.id)}
-                        </td>
-                      ))
-                    ))}
-                  </tr>
-                  {/* Expanded Row */}
-                  {expandedRow === lead.id && lead.enrichment && (
-                    <tr className="bg-zinc-900/80">
-                      <td colSpan={100} className="p-0">
-                        <ExpandedPanel lead={lead} />
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
+              {filteredLeads.map((lead, i) => (
+                <tr
+                  key={lead.id}
+                  onClick={() => handleSelectLead(lead)}
+                  className={`border-b border-zinc-800/30 cursor-pointer transition-colors ${
+                    selectedLead?.id === lead.id ? 'bg-violet-500/10' : 'hover:bg-zinc-800/30'
+                  }`}
+                >
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-white">{lead.company}</div>
+                    {lead.website && <div className="text-[11px] text-zinc-500 mt-0.5">{lead.website}</div>}
+                  </td>
+                  <td className="px-4 py-3 text-zinc-400">{lead.sector}</td>
+                  <td className="px-4 py-3 text-zinc-500">{lead.city}{lead.state ? `, ${lead.state}` : ''}</td>
+                  <td className="px-4 py-3">
+                    {lead.revenue ? <span className="text-emerald-400 font-mono text-[12px]">${lead.revenue}B</span> : <span className="text-zinc-600">—</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <PriorityPill priority={lead.priority} />
+                  </td>
+                  <td className="px-4 py-3">
+                    {enrichingIds.has(lead.id) ? (
+                      <span className="inline-flex items-center gap-1.5 text-amber-400 text-[12px]">
+                        <Spinner /> Enriching
+                      </span>
+                    ) : lead.enrichment ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-400 text-[12px]">
+                        <IconCheck className="w-3.5 h-3.5" /> Ready
+                      </span>
+                    ) : (
+                      <span className="text-zinc-500 text-[12px]">Pending</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {lead.enrichment?.rltxFit?.primaryProduct ? (
+                      <ProductPill product={lead.enrichment.rltxFit.primaryProduct} />
+                    ) : (
+                      <span className="text-zinc-600">—</span>
+                    )}
+                  </td>
+                </tr>
               ))}
             </tbody>
           </table>
           {filteredLeads.length === 0 && (
-            <div className="flex items-center justify-center h-64 text-zinc-500">
-              No leads match your filters
+            <div className="flex items-center justify-center h-64 text-zinc-500 text-[13px]">
+              No leads match your criteria
             </div>
           )}
         </div>
-      </div>
 
-      {/* Status Bar */}
-      <div className="flex-shrink-0 border-t border-zinc-800 bg-zinc-900/50 px-4 py-2 text-xs text-zinc-500 flex items-center justify-between">
-        <span>Showing {filteredLeads.length} of {leads.length} leads</span>
-        <span>
-          {enrichingIds.size > 0 && (
-            <span className="text-amber-400 mr-4">Enriching {enrichingIds.size} leads...</span>
-          )}
-          Press Enter to expand row details
-        </span>
-      </div>
+        {/* Status Bar */}
+        <div className="h-8 flex items-center justify-between px-4 border-t border-zinc-800/50 text-[11px] text-zinc-500">
+          <span>{filteredLeads.length} of {leads.length} leads</span>
+          <span>Click a row to open intel panel</span>
+        </div>
+      </main>
+
+      {/* Detail Panel */}
+      {selectedLead && (
+        <aside className="w-[480px] border-l border-zinc-800/50 flex flex-col bg-zinc-900/50">
+          {/* Panel Header */}
+          <div className="h-14 flex items-center justify-between px-4 border-b border-zinc-800/50">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500/20 to-indigo-500/20 flex items-center justify-center text-violet-400 font-semibold text-[13px]">
+                {selectedLead.company.charAt(0)}
+              </div>
+              <div className="min-w-0">
+                <div className="font-medium text-white text-[14px] truncate">{selectedLead.company}</div>
+                <div className="text-[11px] text-zinc-500">{selectedLead.sector}</div>
+              </div>
+            </div>
+            <button onClick={() => setSelectedLead(null)} className="text-zinc-500 hover:text-white p-1">
+              <IconX className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Panel Tabs */}
+          <div className="flex items-center gap-1 px-4 pt-3 pb-2">
+            {(['overview', 'callprep', 'intel'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setDetailTab(tab)}
+                className={`px-3 py-1.5 text-[12px] font-medium rounded-md transition-colors ${
+                  detailTab === tab ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'
+                }`}
+              >
+                {tab === 'overview' ? 'Overview' : tab === 'callprep' ? 'Call Prep' : 'Intel'}
+              </button>
+            ))}
+          </div>
+
+          {/* Panel Content */}
+          <div className="flex-1 overflow-auto p-4">
+            {!selectedLead.enrichment ? (
+              <div className="flex flex-col items-center justify-center h-full text-center">
+                <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center mb-4">
+                  <IconSparkles className="w-6 h-6 text-violet-400" />
+                </div>
+                <div className="text-[14px] font-medium text-white mb-1">Enrich this lead</div>
+                <div className="text-[13px] text-zinc-500 mb-4 max-w-[280px]">
+                  Get AI-powered insights, call scripts, and strategic intel for {selectedLead.company}
+                </div>
+                <button
+                  onClick={() => handleEnrich(selectedLead)}
+                  disabled={enrichingIds.has(selectedLead.id)}
+                  className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:bg-violet-600/50 text-white font-medium px-4 py-2 rounded-lg text-[13px] transition-colors"
+                >
+                  {enrichingIds.has(selectedLead.id) ? (
+                    <>
+                      <Spinner /> Analyzing...
+                    </>
+                  ) : (
+                    <>
+                      <IconSparkles className="w-4 h-4" /> Enrich with AI
+                    </>
+                  )}
+                </button>
+              </div>
+            ) : detailTab === 'overview' ? (
+              <OverviewTab lead={selectedLead} onReEnrich={() => handleEnrich(selectedLead)} enriching={enrichingIds.has(selectedLead.id)} />
+            ) : detailTab === 'callprep' ? (
+              <CallPrepTab lead={selectedLead} />
+            ) : (
+              <IntelTab lead={selectedLead} />
+            )}
+          </div>
+        </aside>
+      )}
     </div>
   );
 }
 
-// Expanded Panel Component
-function ExpandedPanel({ lead }: { lead: Lead }) {
-  const e = lead.enrichment;
-  if (!e) return null;
+// Overview Tab
+function OverviewTab({ lead, onReEnrich, enriching }: { lead: Lead; onReEnrich: () => void; enriching: boolean }) {
+  const e = lead.enrichment!;
 
   return (
-    <div className="border-t border-zinc-700 bg-zinc-900/60">
-      <div className="grid grid-cols-4 gap-6 p-6">
-        {/* Pain Points */}
-        <div className="space-y-3">
-          <h4 className="text-xs font-semibold text-red-400 uppercase tracking-wider">Pain Points</h4>
-          <div className="space-y-2">
-            {e.painPoints?.slice(0, 3).map((p, i) => (
-              <div key={i} className="bg-zinc-800/50 rounded p-2">
-                <div className="text-xs text-zinc-300">{p.pain}</div>
-                <div className="text-[10px] text-emerald-400 mt-1">→ {p.rltxSolution}</div>
-              </div>
-            ))}
-          </div>
+    <div className="space-y-6">
+      {/* Company Overview */}
+      <Section title="Company Overview">
+        <p className="text-[13px] text-zinc-300 leading-relaxed">{e.companyOverview?.description}</p>
+        <div className="grid grid-cols-2 gap-3 mt-3">
+          <InfoCard label="Business Model" value={e.companyOverview?.businessModel} />
+          <InfoCard label="Market Position" value={e.companyOverview?.marketPosition} />
         </div>
-
-        {/* RLTX Use Cases */}
-        <div className="space-y-3">
-          <h4 className="text-xs font-semibold text-indigo-400 uppercase tracking-wider">Use Cases</h4>
-          <div className="flex flex-wrap gap-1.5">
-            {e.rltxFit?.useCases?.map((uc, i) => (
-              <span key={i} className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-1 rounded">
-                {uc}
-              </span>
-            ))}
+        {e.companyOverview?.recentNews && (
+          <div className="mt-3 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+            <div className="text-[10px] text-amber-400 uppercase tracking-wider mb-1">Recent News</div>
+            <div className="text-[12px] text-amber-200/80">{e.companyOverview.recentNews}</div>
           </div>
-          {e.rltxFit?.competitiveAngle && (
-            <div className="mt-3">
-              <div className="text-[10px] text-zinc-500 uppercase">Competitive Angle</div>
-              <div className="text-xs text-zinc-300 mt-1">{e.rltxFit.competitiveAngle}</div>
-            </div>
+        )}
+      </Section>
+
+      {/* RLTX Fit */}
+      <Section title="RLTX Fit">
+        <div className="flex items-center gap-2 mb-3">
+          <ProductPill product={e.rltxFit?.primaryProduct || ''} large />
+          {e.score && (
+            <span className="text-[11px] text-zinc-500">
+              Fit Score: <span className="text-emerald-400 font-medium">{e.score.fitScore}/10</span>
+            </span>
           )}
         </div>
-
-        {/* Contacts & Outreach */}
-        <div className="space-y-3">
-          <h4 className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Contacts</h4>
-          <div className="space-y-2 text-xs">
-            <div>
-              <span className="text-zinc-500">Target Titles: </span>
-              <span className="text-zinc-300">{e.contacts?.targetTitles?.join(', ')}</span>
-            </div>
-            <div>
-              <span className="text-zinc-500">Decision Process: </span>
-              <span className="text-zinc-300">{e.contacts?.decisionProcess}</span>
-            </div>
-            {e.outreachStrategy?.objections && (
-              <div className="mt-2">
-                <span className="text-zinc-500">Likely Objections:</span>
-                <ul className="text-zinc-400 mt-1 text-[11px] list-disc list-inside">
-                  {e.outreachStrategy.objections.slice(0, 2).map((o, i) => (
-                    <li key={i}>{o}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+        <p className="text-[13px] text-zinc-300">{e.rltxFit?.valueProposition}</p>
+        {e.rltxFit?.estimatedImpact && (
+          <div className="mt-2 text-[12px] text-emerald-400">
+            → {e.rltxFit.estimatedImpact}
           </div>
-        </div>
+        )}
+      </Section>
 
-        {/* Competitive Intel */}
-        <div className="space-y-3">
-          <h4 className="text-xs font-semibold text-violet-400 uppercase tracking-wider">Competitive Intel</h4>
-          <div className="space-y-2 text-xs">
-            <div>
-              <span className="text-zinc-500">Current Solutions: </span>
-              <span className="text-zinc-300">{e.competitiveIntel?.currentSolutions?.join(', ')}</span>
-            </div>
-            <div>
-              <span className="text-zinc-500">Trigger Events: </span>
-              <span className="text-zinc-300">{e.competitiveIntel?.triggerEvents?.join(', ')}</span>
-            </div>
-            {e.score?.reasoning && (
-              <div className="mt-2 p-2 bg-zinc-800/50 rounded">
-                <span className="text-zinc-500">AI Reasoning: </span>
-                <span className="text-zinc-400 text-[11px]">{e.score.reasoning}</span>
-              </div>
-            )}
+      {/* Use Cases */}
+      {e.rltxFit?.useCases && (
+        <Section title="Use Cases">
+          <div className="flex flex-wrap gap-1.5">
+            {e.rltxFit.useCases.map((uc, i) => (
+              <span key={i} className="px-2 py-1 bg-zinc-800 text-zinc-300 rounded text-[11px]">{uc}</span>
+            ))}
           </div>
+        </Section>
+      )}
+
+      {/* Scores */}
+      {e.score && (
+        <Section title="Priority Assessment">
+          <div className="flex items-center gap-4 mb-3">
+            <ScoreRing label="Fit" value={e.score.fitScore} />
+            <ScoreRing label="Urgency" value={e.score.urgencyScore} />
+            <ScoreRing label="Access" value={e.score.accessibilityScore} />
+            <div className="ml-auto">
+              <PriorityPill priority={e.score.overallPriority} />
+            </div>
+          </div>
+          <p className="text-[12px] text-zinc-500">{e.score.reasoning}</p>
+        </Section>
+      )}
+
+      {/* Re-enrich button */}
+      <button
+        onClick={onReEnrich}
+        disabled={enriching}
+        className="w-full flex items-center justify-center gap-2 bg-zinc-800 hover:bg-zinc-700 disabled:bg-zinc-800/50 text-zinc-300 font-medium py-2.5 rounded-lg text-[13px] transition-colors"
+      >
+        {enriching ? <><Spinner /> Re-analyzing...</> : 'Re-analyze with AI'}
+      </button>
+    </div>
+  );
+}
+
+// Call Prep Tab
+function CallPrepTab({ lead }: { lead: Lead }) {
+  const e = lead.enrichment!;
+
+  return (
+    <div className="space-y-6">
+      {/* Opening Hook */}
+      {e.outreachStrategy?.hook && (
+        <Section title="Opening Hook" icon={<IconQuote />}>
+          <div className="p-4 bg-violet-500/10 border border-violet-500/20 rounded-lg">
+            <p className="text-[14px] text-violet-200 italic leading-relaxed">"{e.outreachStrategy.hook}"</p>
+          </div>
+        </Section>
+      )}
+
+      {/* Pain Points & Solutions */}
+      {e.painPoints && e.painPoints.length > 0 && (
+        <Section title="Pain Points to Address" icon={<IconTarget />}>
+          <div className="space-y-3">
+            {e.painPoints.map((p, i) => (
+              <div key={i} className="p-3 bg-zinc-800/50 rounded-lg border border-zinc-700/50">
+                <div className="text-[13px] text-red-400 font-medium mb-1">{p.pain}</div>
+                <div className="text-[11px] text-zinc-500 mb-2">Impact: {p.impact}</div>
+                <div className="text-[12px] text-emerald-400 flex items-start gap-1.5">
+                  <span className="mt-0.5">→</span>
+                  <span>RLTX Solution: {p.rltxSolution}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Discovery Questions */}
+      <Section title="Discovery Questions" icon={<IconQuestion />}>
+        <div className="space-y-2">
+          {getDiscoveryQuestions(lead).map((q, i) => (
+            <div key={i} className="flex items-start gap-2 text-[13px]">
+              <span className="text-violet-400 font-medium">{i + 1}.</span>
+              <span className="text-zinc-300">{q}</span>
+            </div>
+          ))}
         </div>
+      </Section>
+
+      {/* Objection Handling */}
+      {e.outreachStrategy?.objections && (
+        <Section title="Objection Handling" icon={<IconShield />}>
+          <div className="space-y-3">
+            {e.outreachStrategy.objections.map((obj, i) => (
+              <div key={i} className="p-3 bg-zinc-800/50 rounded-lg">
+                <div className="text-[12px] text-amber-400 mb-2">"{obj}"</div>
+                <div className="text-[12px] text-zinc-400">
+                  <span className="text-emerald-400 font-medium">Response:</span> {getObjectionResponse(obj, lead)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Value Script */}
+      <Section title="Value Proposition Script" icon={<IconScript />}>
+        <div className="p-4 bg-zinc-800/50 rounded-lg border border-zinc-700/50 space-y-3">
+          <ScriptBlock label="Open with" text={`"I've been studying ${lead.company}'s approach to ${lead.sector.toLowerCase()} and noticed an opportunity..."`} />
+          <ScriptBlock label="Bridge to RLTX" text={`"At RLTX, we've built ${e.rltxFit?.primaryProduct || 'decision infrastructure'} specifically for organizations like yours..."`} />
+          <ScriptBlock label="Value statement" text={e.rltxFit?.valueProposition || ''} />
+          <ScriptBlock label="Impact" text={e.rltxFit?.estimatedImpact || ''} highlight />
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+// Intel Tab
+function IntelTab({ lead }: { lead: Lead }) {
+  const e = lead.enrichment!;
+
+  return (
+    <div className="space-y-6">
+      {/* Contact Strategy */}
+      {e.contacts && (
+        <Section title="Contact Strategy" icon={<IconUsers />}>
+          <div className="space-y-3">
+            <InfoRow label="Target Titles" value={e.contacts.targetTitles?.join(', ')} />
+            <InfoRow label="Email Pattern" value={e.contacts.emailPatterns?.[0]} mono />
+            <InfoRow label="Decision Process" value={e.contacts.decisionProcess} />
+            <InfoRow label="Best Channel" value={e.outreachStrategy?.channel} />
+            <InfoRow label="Timing" value={e.outreachStrategy?.timing} />
+          </div>
+        </Section>
+      )}
+
+      {/* Competitive Intel */}
+      {e.competitiveIntel && (
+        <Section title="Competitive Intelligence" icon={<IconRadar />}>
+          <div className="space-y-3">
+            <div>
+              <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">Current Solutions</div>
+              <div className="flex flex-wrap gap-1.5">
+                {e.competitiveIntel.currentSolutions?.map((s, i) => (
+                  <span key={i} className="px-2 py-1 bg-red-500/10 text-red-400 rounded text-[11px]">{s}</span>
+                ))}
+              </div>
+            </div>
+            <InfoRow label="Switching Costs" value={e.competitiveIntel.switchingCosts} />
+            <div>
+              <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">Trigger Events</div>
+              <ul className="space-y-1">
+                {e.competitiveIntel.triggerEvents?.map((t, i) => (
+                  <li key={i} className="text-[12px] text-zinc-400 flex items-start gap-2">
+                    <span className="text-emerald-400">•</span> {t}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </Section>
+      )}
+
+      {/* Deal Intelligence */}
+      {e.dealIntel && (
+        <Section title="Deal Intelligence" icon={<IconDollar />}>
+          <div className="grid grid-cols-2 gap-3">
+            <InfoCard label="Deal Size" value={e.dealIntel.estimatedDealSize} highlight />
+            <InfoCard label="Sales Cycle" value={e.dealIntel.salesCycle} />
+            <InfoCard label="Budget" value={e.dealIntel.budget} />
+            <InfoCard label="Champion Type" value={e.dealIntel.champions} />
+          </div>
+        </Section>
+      )}
+
+      {/* Competitive Angle */}
+      {e.rltxFit?.competitiveAngle && (
+        <Section title="Competitive Positioning" icon={<IconTarget />}>
+          <p className="text-[13px] text-zinc-300 leading-relaxed">{e.rltxFit.competitiveAngle}</p>
+        </Section>
+      )}
+
+      {/* Company Data */}
+      <Section title="Company Data" icon={<IconDatabase />}>
+        <div className="grid grid-cols-2 gap-3">
+          <InfoCard label="Revenue" value={lead.revenue ? `$${lead.revenue}B` : 'Unknown'} />
+          <InfoCard label="Employees" value={lead.employees?.toLocaleString() || 'Unknown'} />
+          <InfoCard label="Location" value={`${lead.city || ''}${lead.state ? `, ${lead.state}` : ''}`} />
+          <InfoCard label="Source" value={lead.source || 'Unknown'} />
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+// Helper Functions
+function getDiscoveryQuestions(lead: Lead): string[] {
+  const e = lead.enrichment;
+  const product = e?.rltxFit?.primaryProduct?.toUpperCase() || '';
+
+  const baseQuestions = [
+    `How is ${lead.company} currently approaching decision-making at scale?`,
+    `What's your biggest challenge with ${lead.sector.toLowerCase()} operations right now?`,
+    `How do you currently simulate outcomes before committing resources?`,
+  ];
+
+  if (product.includes('FORESIGHT')) {
+    return [
+      ...baseQuestions,
+      'How are you modeling adversary behavior in your current wargaming exercises?',
+      'What would it mean to run thousands of simulations before a major decision?',
+    ];
+  } else if (product.includes('VERITAS')) {
+    return [
+      ...baseQuestions,
+      'How long does a typical research cycle take from question to actionable insight?',
+      'Have you ever had research results that didn\'t match real-world outcomes?',
+    ];
+  } else if (product.includes('POPULOUS')) {
+    return [
+      ...baseQuestions,
+      'How are you currently testing messaging before major campaigns?',
+      'What would it mean to simulate audience reactions in hours instead of weeks?',
+    ];
+  }
+
+  return baseQuestions;
+}
+
+function getObjectionResponse(objection: string, lead: Lead): string {
+  const lower = objection.toLowerCase();
+  if (lower.includes('budget') || lower.includes('cost')) {
+    return `The question isn't cost—it's ROI. Our clients see ${lead.enrichment?.rltxFit?.estimatedImpact || '10x returns'} within the first quarter. What's the cost of a wrong decision?`;
+  }
+  if (lower.includes('time') || lower.includes('bandwidth')) {
+    return 'That\'s exactly why we built this. RLTX reduces decision cycles from months to hours. We handle the complexity so your team can focus on execution.';
+  }
+  if (lower.includes('already') || lower.includes('solution')) {
+    return `Current tools give you data. RLTX gives you decisions. We're not replacing your stack—we're adding the decision layer that makes everything else more valuable.`;
+  }
+  return 'I understand. Let me show you how similar organizations approached this and the outcomes they achieved.';
+}
+
+// UI Components
+function Section({ title, icon, children }: { title: string; icon?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        {icon && <span className="text-zinc-500">{icon}</span>}
+        <h3 className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">{title}</h3>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function InfoCard({ label, value, highlight, mono }: { label: string; value?: string; highlight?: boolean; mono?: boolean }) {
+  return (
+    <div className="p-2.5 bg-zinc-800/50 rounded-lg">
+      <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-0.5">{label}</div>
+      <div className={`text-[13px] ${highlight ? 'text-emerald-400 font-medium' : 'text-zinc-300'} ${mono ? 'font-mono text-[12px]' : ''}`}>
+        {value || '—'}
       </div>
     </div>
   );
 }
 
-// Badge Components
-function PriorityBadge({ priority }: { priority: string }) {
+function InfoRow({ label, value, mono }: { label: string; value?: string; mono?: boolean }) {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <span className="text-[12px] text-zinc-500">{label}</span>
+      <span className={`text-[12px] text-zinc-300 text-right ${mono ? 'font-mono text-[11px]' : ''}`}>{value || '—'}</span>
+    </div>
+  );
+}
+
+function ScriptBlock({ label, text, highlight }: { label: string; text: string; highlight?: boolean }) {
+  if (!text) return null;
+  return (
+    <div>
+      <div className="text-[10px] text-violet-400 uppercase tracking-wider mb-1">{label}</div>
+      <div className={`text-[13px] ${highlight ? 'text-emerald-400' : 'text-zinc-300'}`}>{text}</div>
+    </div>
+  );
+}
+
+function ScoreRing({ label, value }: { label: string; value: number }) {
+  const color = value >= 8 ? 'text-emerald-400' : value >= 6 ? 'text-amber-400' : 'text-red-400';
+  return (
+    <div className="text-center">
+      <div className={`text-[18px] font-semibold ${color}`}>{value}</div>
+      <div className="text-[10px] text-zinc-500">{label}</div>
+    </div>
+  );
+}
+
+function NavItem({ icon, label, active, count, onClick }: { icon: React.ReactNode; label: string; active?: boolean; count?: number; onClick?: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center justify-between px-2 py-1.5 rounded-md text-[13px] transition-colors ${
+        active ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
+      }`}
+    >
+      <span className="flex items-center gap-2">
+        {icon}
+        {label}
+      </span>
+      {count !== undefined && <span className="text-[11px] text-zinc-500">{count}</span>}
+    </button>
+  );
+}
+
+function PriorityPill({ priority }: { priority: string }) {
   const colors: Record<string, string> = {
-    Critical: 'bg-red-500/20 text-red-400 border-red-500/30',
-    High: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
-    Medium: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-    Low: 'bg-zinc-500/20 text-zinc-400 border-zinc-500/30',
+    Critical: 'bg-red-500/15 text-red-400',
+    High: 'bg-orange-500/15 text-orange-400',
+    Medium: 'bg-yellow-500/15 text-yellow-400',
+    Low: 'bg-zinc-500/15 text-zinc-400',
   };
   return (
-    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${colors[priority] || colors.Low}`}>
+    <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-medium ${colors[priority] || colors.Low}`}>
       {priority}
     </span>
   );
 }
 
-function ProductBadge({ product }: { product: string }) {
+function ProductPill({ product, large }: { product: string; large?: boolean }) {
   const colors: Record<string, string> = {
-    FORESIGHT: 'bg-blue-500/20 text-blue-400',
-    VERITAS: 'bg-purple-500/20 text-purple-400',
-    POPULOUS: 'bg-emerald-500/20 text-emerald-400',
+    FORESIGHT: 'bg-blue-500/15 text-blue-400',
+    VERITAS: 'bg-purple-500/15 text-purple-400',
+    POPULOUS: 'bg-emerald-500/15 text-emerald-400',
   };
   const key = product.toUpperCase().includes('FORESIGHT') ? 'FORESIGHT' :
               product.toUpperCase().includes('VERITAS') ? 'VERITAS' :
               product.toUpperCase().includes('POPULOUS') ? 'POPULOUS' : '';
   return (
-    <span className={`text-[10px] px-1.5 py-0.5 rounded ${colors[key] || 'bg-zinc-700 text-zinc-300'}`}>
+    <span className={`inline-block px-2 py-0.5 rounded font-medium ${colors[key] || 'bg-zinc-700 text-zinc-300'} ${large ? 'text-[12px]' : 'text-[11px]'}`}>
       {key || product}
-    </span>
-  );
-}
-
-function PositionBadge({ position }: { position: string }) {
-  const colors: Record<string, string> = {
-    Leader: 'text-emerald-400',
-    Challenger: 'text-blue-400',
-    Niche: 'text-amber-400',
-    Emerging: 'text-violet-400',
-  };
-  return <span className={`text-xs ${colors[position] || 'text-zinc-400'}`}>{position}</span>;
-}
-
-function ChannelBadge({ channel }: { channel: string }) {
-  const colors: Record<string, string> = {
-    Email: 'bg-blue-500/20 text-blue-400',
-    LinkedIn: 'bg-indigo-500/20 text-indigo-400',
-    Phone: 'bg-emerald-500/20 text-emerald-400',
-    Event: 'bg-amber-500/20 text-amber-400',
-  };
-  return (
-    <span className={`text-[10px] px-1.5 py-0.5 rounded ${colors[channel] || 'bg-zinc-700 text-zinc-300'}`}>
-      {channel}
-    </span>
-  );
-}
-
-function SwitchingCostBadge({ cost }: { cost: string }) {
-  const colors: Record<string, string> = {
-    Low: 'text-emerald-400',
-    Medium: 'text-amber-400',
-    High: 'text-red-400',
-  };
-  return <span className={`text-xs ${colors[cost] || 'text-zinc-400'}`}>{cost}</span>;
-}
-
-function ScoreCell({ value }: { value: number }) {
-  const color = value >= 8 ? 'text-emerald-400' :
-                value >= 6 ? 'text-amber-400' :
-                value >= 4 ? 'text-orange-400' :
-                'text-red-400';
-  return (
-    <span className={`font-mono font-medium ${color}`}>
-      {value}
     </span>
   );
 }
 
 function Spinner() {
   return (
-    <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
+    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
     </svg>
   );
 }
+
+// Icons
+function IconDatabase() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /></svg>; }
+function IconSparkles() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>; }
+function IconClock() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>; }
+function IconSearch() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>; }
+function IconX() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>; }
+function IconCheck() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>; }
+function IconQuote() { return <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z" /></svg>; }
+function IconTarget() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" /></svg>; }
+function IconQuestion() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></svg>; }
+function IconShield() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>; }
+function IconScript() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" /></svg>; }
+function IconUsers() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" /></svg>; }
+function IconRadar() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M12 2a10 10 0 0110 10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" /></svg>; }
+function IconDollar() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" /></svg>; }
