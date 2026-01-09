@@ -130,8 +130,8 @@ export default function LeadEngine() {
         {/* Logo */}
         <div className="h-14 flex items-center px-4 border-b border-zinc-800/50">
           <div className="flex items-center gap-2.5">
-            <div className="w-6 h-6 bg-gradient-to-br from-violet-500 to-indigo-600 rounded-md" />
             <span className="font-semibold text-[15px] text-white tracking-tight">RLTX</span>
+            <span className="text-[10px] text-zinc-600 font-medium tracking-widest">LEADS</span>
           </div>
         </div>
 
@@ -249,7 +249,7 @@ export default function LeadEngine() {
                   key={lead.id}
                   onClick={() => handleSelectLead(lead)}
                   className={`border-b border-zinc-800/30 cursor-pointer transition-colors ${
-                    selectedLead?.id === lead.id ? 'bg-violet-500/10' : 'hover:bg-zinc-800/30'
+                    selectedLead?.id === lead.id ? 'bg-white/[0.03]' : 'hover:bg-zinc-800/30'
                   }`}
                 >
                   <td className="px-4 py-3">
@@ -308,7 +308,7 @@ export default function LeadEngine() {
           {/* Panel Header */}
           <div className="h-14 flex items-center justify-between px-4 border-b border-zinc-800/50">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500/20 to-indigo-500/20 flex items-center justify-center text-violet-400 font-semibold text-[13px]">
+              <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-300 font-semibold text-[13px]">
                 {selectedLead.company.charAt(0)}
               </div>
               <div className="min-w-0">
@@ -340,8 +340,8 @@ export default function LeadEngine() {
           <div className="flex-1 overflow-auto p-4">
             {!selectedLead.enrichment ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
-                <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center mb-4">
-                  <IconSparkles className="w-6 h-6 text-violet-400" />
+                <div className="w-12 h-12 rounded-xl bg-zinc-800 flex items-center justify-center mb-4">
+                  <IconSparkles className="w-6 h-6 text-zinc-400" />
                 </div>
                 <div className="text-[14px] font-medium text-white mb-1">Enrich this lead</div>
                 <div className="text-[13px] text-zinc-500 mb-4 max-w-[280px]">
@@ -350,7 +350,7 @@ export default function LeadEngine() {
                 <button
                   onClick={() => handleEnrich(selectedLead)}
                   disabled={enrichingIds.has(selectedLead.id)}
-                  className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:bg-violet-600/50 text-white font-medium px-4 py-2 rounded-lg text-[13px] transition-colors"
+                  className="flex items-center gap-2 bg-white hover:bg-zinc-200 disabled:bg-zinc-700 text-black disabled:text-zinc-400 font-medium px-4 py-2 rounded-lg text-[13px] transition-colors"
                 >
                   {enrichingIds.has(selectedLead.id) ? (
                     <>
@@ -463,8 +463,8 @@ function CallPrepTab({ lead }: { lead: Lead }) {
       {/* Opening Hook */}
       {e.outreachStrategy?.hook && (
         <Section title="Opening Hook" icon={<IconQuote />}>
-          <div className="p-4 bg-violet-500/10 border border-violet-500/20 rounded-lg">
-            <p className="text-[14px] text-violet-200 italic leading-relaxed">"{e.outreachStrategy.hook}"</p>
+          <div className="p-4 bg-zinc-800/80 border border-zinc-700/50 rounded-lg">
+            <p className="text-[14px] text-zinc-200 italic leading-relaxed">"{e.outreachStrategy.hook}"</p>
           </div>
         </Section>
       )}
@@ -492,7 +492,7 @@ function CallPrepTab({ lead }: { lead: Lead }) {
         <div className="space-y-2">
           {getDiscoveryQuestions(lead).map((q, i) => (
             <div key={i} className="flex items-start gap-2 text-[13px]">
-              <span className="text-violet-400 font-medium">{i + 1}.</span>
+              <span className="text-zinc-500 font-medium">{i + 1}.</span>
               <span className="text-zinc-300">{q}</span>
             </div>
           ))}
@@ -691,7 +691,7 @@ function ScriptBlock({ label, text, highlight }: { label: string; text: string; 
   if (!text) return null;
   return (
     <div>
-      <div className="text-[10px] text-violet-400 uppercase tracking-wider mb-1">{label}</div>
+      <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">{label}</div>
       <div className={`text-[13px] ${highlight ? 'text-emerald-400' : 'text-zinc-300'}`}>{text}</div>
     </div>
   );
@@ -740,15 +740,15 @@ function PriorityPill({ priority }: { priority: string }) {
 
 function ProductPill({ product, large }: { product: string; large?: boolean }) {
   const colors: Record<string, string> = {
-    FORESIGHT: 'bg-blue-500/15 text-blue-400',
-    VERITAS: 'bg-purple-500/15 text-purple-400',
-    POPULOUS: 'bg-emerald-500/15 text-emerald-400',
+    FORESIGHT: 'bg-zinc-800 text-zinc-300 border border-zinc-700',
+    VERITAS: 'bg-zinc-800 text-zinc-300 border border-zinc-700',
+    POPULOUS: 'bg-zinc-800 text-zinc-300 border border-zinc-700',
   };
   const key = product.toUpperCase().includes('FORESIGHT') ? 'FORESIGHT' :
               product.toUpperCase().includes('VERITAS') ? 'VERITAS' :
               product.toUpperCase().includes('POPULOUS') ? 'POPULOUS' : '';
   return (
-    <span className={`inline-block px-2 py-0.5 rounded font-medium ${colors[key] || 'bg-zinc-700 text-zinc-300'} ${large ? 'text-[12px]' : 'text-[11px]'}`}>
+    <span className={`inline-block px-2 py-0.5 rounded font-medium ${colors[key] || 'bg-zinc-800 text-zinc-300'} ${large ? 'text-[12px]' : 'text-[11px]'}`}>
       {key || product}
     </span>
   );
