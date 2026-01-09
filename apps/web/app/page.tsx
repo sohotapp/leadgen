@@ -83,8 +83,28 @@ export default function LeadEngine() {
   const [enrichingIds, setEnrichingIds] = React.useState<Set<string>>(new Set());
   const [selectedLead, setSelectedLead] = React.useState<Lead | null>(null);
   const [activeTab, setActiveTab] = React.useState<'all' | 'enriched' | 'pending'>('all');
-  const [detailTab, setDetailTab] = React.useState<'overview' | 'callprep' | 'intel'>('overview');
+  const [detailTab, setDetailTab] = React.useState<'overview' | 'callprep' | 'intel' | 'chat'>('overview');
   const [dataSource, setDataSource] = React.useState<'loading' | 'supabase' | 'json'>('loading');
+
+  // Bulk selection
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const [focusedIndex, setFocusedIndex] = React.useState<number>(0);
+
+  // Sorting
+  const [sortBy, setSortBy] = React.useState<'company' | 'priority' | 'fitScore' | 'revenue'>('company');
+  const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('asc');
+
+  // Scraper modal
+  const [showScraper, setShowScraper] = React.useState(false);
+
+  // Chat state
+  const [chatMessages, setChatMessages] = React.useState<Array<{role: 'user' | 'assistant'; content: string}>>([]);
+  const [chatInput, setChatInput] = React.useState('');
+  const [chatLoading, setChatLoading] = React.useState(false);
+
+  // Refs
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const tableRef = React.useRef<HTMLDivElement>(null);
 
   // Fetch leads from Supabase on mount
   React.useEffect(() => {
@@ -108,7 +128,7 @@ export default function LeadEngine() {
   const priorities = ['Critical', 'High', 'Medium', 'Low'];
 
   const filteredLeads = React.useMemo(() => {
-    return leads.filter(lead => {
+    const filtered = leads.filter(lead => {
       const matchesSearch = !search ||
         lead.company.toLowerCase().includes(search.toLowerCase()) ||
         lead.sector.toLowerCase().includes(search.toLowerCase()) ||
@@ -121,7 +141,25 @@ export default function LeadEngine() {
         (activeTab === 'pending' && !lead.enrichment);
       return matchesSearch && matchesSector && matchesPriority && matchesTab;
     });
-  }, [leads, search, sectorFilter, priorityFilter, activeTab]);
+
+    // Sort
+    const priorityOrder: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3 };
+    return filtered.sort((a, b) => {
+      let cmp = 0;
+      if (sortBy === 'company') {
+        cmp = a.company.localeCompare(b.company);
+      } else if (sortBy === 'priority') {
+        cmp = (priorityOrder[a.priority || 'Medium'] || 2) - (priorityOrder[b.priority || 'Medium'] || 2);
+      } else if (sortBy === 'fitScore') {
+        const aScore = a.enrichment?.score?.fitScore || 0;
+        const bScore = b.enrichment?.score?.fitScore || 0;
+        cmp = bScore - aScore; // Higher first by default
+      } else if (sortBy === 'revenue') {
+        cmp = (b.revenue || 0) - (a.revenue || 0);
+      }
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [leads, search, sectorFilter, priorityFilter, activeTab, sortBy, sortDir]);
 
   const enrichedCount = leads.filter(l => l.enrichment).length;
 
@@ -154,7 +192,173 @@ export default function LeadEngine() {
   const handleSelectLead = (lead: Lead) => {
     setSelectedLead(lead);
     setDetailTab('overview');
+    setChatMessages([]);
+    setChatInput('');
   };
+
+  // Batch enrich (max 10 at a time)
+  const handleBatchEnrich = async () => {
+    const toEnrich = filteredLeads
+      .filter(l => selectedIds.has(l.id) && !l.enrichment && !enrichingIds.has(l.id))
+      .slice(0, 10);
+
+    if (toEnrich.length === 0) return;
+
+    // Add all to enriching set
+    setEnrichingIds(prev => {
+      const next = new Set(prev);
+      toEnrich.forEach(l => next.add(l.id));
+      return next;
+    });
+
+    // Process sequentially to avoid rate limits
+    for (const lead of toEnrich) {
+      try {
+        const res = await fetch('/api/enrich-lead', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lead }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          const updatedLead = { ...lead, enrichment: data.data, enrichedAt: data.enrichedAt };
+          setLeads(prev => prev.map(l => l.id === lead.id ? updatedLead : l));
+        }
+      } catch (e) {
+        console.error('Enrich failed:', e);
+      }
+      // Remove from enriching
+      setEnrichingIds(prev => {
+        const next = new Set(prev);
+        next.delete(lead.id);
+        return next;
+      });
+    }
+
+    // Clear selection after batch
+    setSelectedIds(new Set());
+  };
+
+  // Toggle selection
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Select all visible
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredLeads.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredLeads.map(l => l.id)));
+    }
+  };
+
+  // Handle sort
+  const handleSort = (col: typeof sortBy) => {
+    if (sortBy === col) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(col);
+      setSortDir('asc');
+    }
+  };
+
+  // Chat with AI about lead
+  const handleChat = async () => {
+    if (!chatInput.trim() || !selectedLead || chatLoading) return;
+
+    const userMessage = chatInput.trim();
+    setChatMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setChatInput('');
+    setChatLoading(true);
+
+    try {
+      const res = await fetch('/api/chat-lead', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lead: selectedLead, message: userMessage, history: chatMessages }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setChatMessages(prev => [...prev, { role: 'assistant', content: data.response }]);
+      }
+    } catch (e) {
+      console.error('Chat failed:', e);
+      setChatMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, something went wrong.' }]);
+    }
+
+    setChatLoading(false);
+  };
+
+  // Keyboard navigation
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        if (e.key === 'Escape') {
+          (e.target as HTMLElement).blur();
+        }
+        return;
+      }
+
+      switch (e.key) {
+        case 'j':
+          e.preventDefault();
+          setFocusedIndex(prev => Math.min(prev + 1, filteredLeads.length - 1));
+          break;
+        case 'k':
+          e.preventDefault();
+          setFocusedIndex(prev => Math.max(prev - 1, 0));
+          break;
+        case 'Enter':
+          e.preventDefault();
+          if (filteredLeads[focusedIndex]) {
+            handleSelectLead(filteredLeads[focusedIndex]);
+          }
+          break;
+        case 'e':
+          e.preventDefault();
+          if (selectedLead && !selectedLead.enrichment && !enrichingIds.has(selectedLead.id)) {
+            handleEnrich(selectedLead);
+          } else if (selectedIds.size > 0) {
+            handleBatchEnrich();
+          }
+          break;
+        case 'Escape':
+          e.preventDefault();
+          if (showScraper) {
+            setShowScraper(false);
+          } else if (selectedLead) {
+            setSelectedLead(null);
+          } else {
+            setSelectedIds(new Set());
+          }
+          break;
+        case '/':
+          e.preventDefault();
+          searchInputRef.current?.focus();
+          break;
+        case 'x':
+          e.preventDefault();
+          if (filteredLeads[focusedIndex]) {
+            toggleSelect(filteredLeads[focusedIndex].id);
+          }
+          break;
+        case 's':
+          e.preventDefault();
+          setShowScraper(true);
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [filteredLeads, focusedIndex, selectedLead, enrichingIds, selectedIds, showScraper]);
 
   return (
     <div className="h-screen flex bg-[#0a0a0a] text-zinc-100 font-['Inter',system-ui,sans-serif]">
@@ -238,8 +442,9 @@ export default function LeadEngine() {
             <div className="relative flex items-center">
               <IconSearch className="absolute left-2.5 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
               <input
+                ref={searchInputRef}
                 type="text"
-                placeholder="Search..."
+                placeholder="Search... (/)"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-52 h-8 bg-zinc-800/50 border border-zinc-700/50 rounded-md pl-8 pr-8 text-[13px] focus:outline-none focus:border-zinc-600 placeholder-zinc-500"
@@ -259,21 +464,64 @@ export default function LeadEngine() {
               <option value="">Priority</option>
               {priorities.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
+
+            <button
+              onClick={() => setShowScraper(true)}
+              className="h-8 px-3 bg-zinc-800/50 border border-zinc-700/50 rounded-md text-[13px] text-zinc-400 hover:text-white hover:border-zinc-600 transition-colors flex items-center gap-1.5"
+            >
+              <IconPlus className="w-3.5 h-3.5" /> Find Leads
+            </button>
           </div>
         </header>
 
+        {/* Bulk Actions Bar */}
+        {selectedIds.size > 0 && (
+          <div className="h-10 flex items-center justify-between px-4 bg-zinc-800/80 border-b border-zinc-700/50">
+            <div className="flex items-center gap-3">
+              <span className="text-[13px] text-zinc-300">{selectedIds.size} selected</span>
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="text-[12px] text-zinc-500 hover:text-white"
+              >
+                Clear
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleBatchEnrich}
+                disabled={enrichingIds.size > 0}
+                className="h-7 px-3 bg-white hover:bg-zinc-200 disabled:bg-zinc-700 text-black disabled:text-zinc-400 font-medium rounded text-[12px] flex items-center gap-1.5 transition-colors"
+              >
+                {enrichingIds.size > 0 ? (
+                  <><Spinner /> Enriching {enrichingIds.size}...</>
+                ) : (
+                  <><IconSparkles className="w-3.5 h-3.5" /> Enrich Selected (max 10)</>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Table */}
-        <div className="flex-1 overflow-auto">
+        <div ref={tableRef} className="flex-1 overflow-auto">
           <table className="w-full text-[13px]">
             <thead className="sticky top-0 z-10">
               <tr className="bg-zinc-900/95 backdrop-blur border-b border-zinc-800/50 text-left">
-                <th className="font-medium text-zinc-400 px-4 py-2.5 w-[280px]">Company</th>
+                <th className="px-4 py-2.5 w-[40px]">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.size === filteredLeads.length && filteredLeads.length > 0}
+                    onChange={toggleSelectAll}
+                    className="w-3.5 h-3.5 rounded border-zinc-600 bg-zinc-800 cursor-pointer"
+                  />
+                </th>
+                <SortHeader label="Company" col="company" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} width="w-[260px]" />
                 <th className="font-medium text-zinc-400 px-4 py-2.5 w-[140px]">Sector</th>
                 <th className="font-medium text-zinc-400 px-4 py-2.5 w-[120px]">Location</th>
-                <th className="font-medium text-zinc-400 px-4 py-2.5 w-[90px]">Revenue</th>
-                <th className="font-medium text-zinc-400 px-4 py-2.5 w-[90px]">Priority</th>
+                <SortHeader label="Revenue" col="revenue" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} width="w-[90px]" />
+                <SortHeader label="Priority" col="priority" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} width="w-[90px]" />
                 <th className="font-medium text-zinc-400 px-4 py-2.5 w-[100px]">Status</th>
-                <th className="font-medium text-zinc-400 px-4 py-2.5">RLTX Fit</th>
+                <SortHeader label="Fit Score" col="fitScore" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} width="w-[100px]" />
               </tr>
             </thead>
             <tbody>
@@ -282,9 +530,19 @@ export default function LeadEngine() {
                   key={lead.id}
                   onClick={() => handleSelectLead(lead)}
                   className={`border-b border-zinc-800/30 cursor-pointer transition-colors ${
-                    selectedLead?.id === lead.id ? 'bg-white/[0.03]' : 'hover:bg-zinc-800/30'
+                    selectedLead?.id === lead.id ? 'bg-white/[0.03]' :
+                    focusedIndex === i ? 'bg-zinc-800/40' :
+                    selectedIds.has(lead.id) ? 'bg-zinc-800/20' : 'hover:bg-zinc-800/30'
                   }`}
                 >
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(lead.id)}
+                      onChange={() => toggleSelect(lead.id)}
+                      className="w-3.5 h-3.5 rounded border-zinc-600 bg-zinc-800 cursor-pointer"
+                    />
+                  </td>
                   <td className="px-4 py-3">
                     <div className="font-medium text-white">{lead.company}</div>
                     {lead.website && <div className="text-[11px] text-zinc-500 mt-0.5">{lead.website}</div>}
@@ -311,8 +569,13 @@ export default function LeadEngine() {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {lead.enrichment?.rltxFit?.primaryProduct ? (
-                      <ProductPill product={lead.enrichment.rltxFit.primaryProduct} />
+                    {lead.enrichment?.score?.fitScore ? (
+                      <span className={`font-mono text-[12px] font-medium ${
+                        lead.enrichment.score.fitScore >= 8 ? 'text-emerald-400' :
+                        lead.enrichment.score.fitScore >= 6 ? 'text-amber-400' : 'text-red-400'
+                      }`}>
+                        {lead.enrichment.score.fitScore}/10
+                      </span>
                     ) : (
                       <span className="text-zinc-600">—</span>
                     )}
@@ -331,7 +594,12 @@ export default function LeadEngine() {
         {/* Status Bar */}
         <div className="h-8 flex items-center justify-between px-4 border-t border-zinc-800/50 text-[11px] text-zinc-500">
           <span>{filteredLeads.length} of {leads.length} leads</span>
-          <span>Click a row to open intel panel</span>
+          <div className="flex items-center gap-4">
+            <span><kbd className="px-1 py-0.5 bg-zinc-800 rounded text-[10px]">j</kbd>/<kbd className="px-1 py-0.5 bg-zinc-800 rounded text-[10px]">k</kbd> navigate</span>
+            <span><kbd className="px-1 py-0.5 bg-zinc-800 rounded text-[10px]">x</kbd> select</span>
+            <span><kbd className="px-1 py-0.5 bg-zinc-800 rounded text-[10px]">e</kbd> enrich</span>
+            <span><kbd className="px-1 py-0.5 bg-zinc-800 rounded text-[10px]">Enter</kbd> open</span>
+          </div>
         </div>
       </main>
 
@@ -356,7 +624,7 @@ export default function LeadEngine() {
 
           {/* Panel Tabs */}
           <div className="flex items-center gap-1 px-4 pt-3 pb-2">
-            {(['overview', 'callprep', 'intel'] as const).map(tab => (
+            {(['overview', 'callprep', 'intel', 'chat'] as const).map(tab => (
               <button
                 key={tab}
                 onClick={() => setDetailTab(tab)}
@@ -364,7 +632,7 @@ export default function LeadEngine() {
                   detailTab === tab ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'
                 }`}
               >
-                {tab === 'overview' ? 'Overview' : tab === 'callprep' ? 'Call Prep' : 'Intel'}
+                {tab === 'overview' ? 'Overview' : tab === 'callprep' ? 'Call Prep' : tab === 'intel' ? 'Intel' : 'Research'}
               </button>
             ))}
           </div>
@@ -400,11 +668,25 @@ export default function LeadEngine() {
               <OverviewTab lead={selectedLead} onReEnrich={() => handleEnrich(selectedLead)} enriching={enrichingIds.has(selectedLead.id)} />
             ) : detailTab === 'callprep' ? (
               <CallPrepTab lead={selectedLead} />
-            ) : (
+            ) : detailTab === 'intel' ? (
               <IntelTab lead={selectedLead} />
+            ) : (
+              <ChatTab
+                lead={selectedLead}
+                messages={chatMessages}
+                input={chatInput}
+                setInput={setChatInput}
+                onSend={handleChat}
+                loading={chatLoading}
+              />
             )}
           </div>
         </aside>
+      )}
+
+      {/* Scraper Modal */}
+      {showScraper && (
+        <ScraperModal onClose={() => setShowScraper(false)} />
       )}
     </div>
   );
@@ -639,6 +921,247 @@ function IntelTab({ lead }: { lead: Lead }) {
   );
 }
 
+// Chat Tab - Research assistant for each lead
+function ChatTab({
+  lead,
+  messages,
+  input,
+  setInput,
+  onSend,
+  loading
+}: {
+  lead: Lead;
+  messages: Array<{role: 'user' | 'assistant'; content: string}>;
+  input: string;
+  setInput: (v: string) => void;
+  onSend: () => void;
+  loading: boolean;
+}) {
+  const messagesEndRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex-1 overflow-auto space-y-4 pb-4">
+        {messages.length === 0 && (
+          <div className="text-center py-8">
+            <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center mx-auto mb-3">
+              <IconChat className="w-5 h-5 text-zinc-400" />
+            </div>
+            <div className="text-[13px] text-zinc-400 mb-2">Research {lead.company}</div>
+            <div className="text-[12px] text-zinc-500 max-w-[280px] mx-auto">
+              Ask questions about this company, competitors, market position, news, or anything else.
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2 justify-center">
+              {[
+                'What are their main competitors?',
+                'Recent news or announcements?',
+                'Key decision makers?',
+                'Tech stack they use?',
+              ].map((q, i) => (
+                <button
+                  key={i}
+                  onClick={() => setInput(q)}
+                  className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-[11px] text-zinc-400 hover:text-white transition-colors"
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[85%] px-3 py-2 rounded-lg text-[13px] ${
+              msg.role === 'user'
+                ? 'bg-zinc-700 text-white'
+                : 'bg-zinc-800/50 text-zinc-300'
+            }`}>
+              {msg.content}
+            </div>
+          </div>
+        ))}
+
+        {loading && (
+          <div className="flex justify-start">
+            <div className="px-3 py-2 bg-zinc-800/50 rounded-lg">
+              <Spinner />
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      <div className="border-t border-zinc-800/50 pt-3">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && onSend()}
+            placeholder={`Ask about ${lead.company}...`}
+            className="flex-1 h-9 bg-zinc-800/50 border border-zinc-700/50 rounded-lg px-3 text-[13px] focus:outline-none focus:border-zinc-600 placeholder-zinc-500"
+          />
+          <button
+            onClick={onSend}
+            disabled={loading || !input.trim()}
+            className="h-9 px-4 bg-white hover:bg-zinc-200 disabled:bg-zinc-700 text-black disabled:text-zinc-400 font-medium rounded-lg text-[13px] transition-colors"
+          >
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Scraper Modal - Find more leads
+function ScraperModal({ onClose }: { onClose: () => void }) {
+  const [query, setQuery] = React.useState('');
+  const [source, setSource] = React.useState<'github' | 'linkedin' | 'crunchbase' | 'custom'>('github');
+  const [loading, setLoading] = React.useState(false);
+  const [results, setResults] = React.useState<string | null>(null);
+
+  const handleScrape = async () => {
+    if (!query.trim()) return;
+    setLoading(true);
+    setResults(null);
+
+    try {
+      const res = await fetch('/api/scrape-leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, source }),
+      });
+      const data = await res.json();
+      setResults(data.message || 'Search complete. Check leads table for new entries.');
+    } catch (e) {
+      setResults('Error: Failed to search. Try again.');
+    }
+
+    setLoading(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={onClose}>
+      <div className="w-[500px] bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+          <div>
+            <h2 className="text-[15px] font-semibold text-white">Find More Leads</h2>
+            <p className="text-[12px] text-zinc-500 mt-0.5">Search for companies to add to your database</p>
+          </div>
+          <button onClick={onClose} className="text-zinc-500 hover:text-white p-1">
+            <IconX className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="block text-[12px] text-zinc-400 mb-1.5">Source</label>
+            <div className="flex gap-2">
+              {(['github', 'linkedin', 'crunchbase', 'custom'] as const).map(s => (
+                <button
+                  key={s}
+                  onClick={() => setSource(s)}
+                  className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
+                    source === s ? 'bg-zinc-700 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  {s === 'github' ? 'GitHub' : s === 'linkedin' ? 'LinkedIn' : s === 'crunchbase' ? 'Crunchbase' : 'Custom'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[12px] text-zinc-400 mb-1.5">Search Query</label>
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleScrape()}
+              placeholder={
+                source === 'github' ? 'e.g., "AI agent framework" or "defense tech startup"' :
+                source === 'linkedin' ? 'e.g., "Series B fintech New York"' :
+                source === 'crunchbase' ? 'e.g., "enterprise AI funding > 10M"' :
+                'Enter a URL or search query...'
+              }
+              className="w-full h-10 bg-zinc-800/50 border border-zinc-700/50 rounded-lg px-3 text-[13px] focus:outline-none focus:border-zinc-600 placeholder-zinc-500"
+            />
+          </div>
+
+          <div className="text-[11px] text-zinc-500 bg-zinc-800/30 rounded-lg p-3">
+            <div className="font-medium text-zinc-400 mb-1">Suggested searches:</div>
+            <div className="space-y-1">
+              <div>• "AI infrastructure companies Series A+"</div>
+              <div>• "Defense contractors AI/ML"</div>
+              <div>• "Fortune 500 digital transformation"</div>
+              <div>• "Healthcare analytics platforms"</div>
+            </div>
+          </div>
+
+          {results && (
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-[12px] text-emerald-400">
+              {results}
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-zinc-800">
+          <button
+            onClick={onClose}
+            className="h-9 px-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium rounded-lg text-[13px] transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleScrape}
+            disabled={loading || !query.trim()}
+            className="h-9 px-4 bg-white hover:bg-zinc-200 disabled:bg-zinc-700 text-black disabled:text-zinc-400 font-medium rounded-lg text-[13px] transition-colors flex items-center gap-2"
+          >
+            {loading ? <><Spinner /> Searching...</> : <><IconSearch className="w-4 h-4" /> Search</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Sort Header Component
+function SortHeader({
+  label,
+  col,
+  sortBy,
+  sortDir,
+  onSort,
+  width
+}: {
+  label: string;
+  col: 'company' | 'priority' | 'fitScore' | 'revenue';
+  sortBy: string;
+  sortDir: 'asc' | 'desc';
+  onSort: (col: 'company' | 'priority' | 'fitScore' | 'revenue') => void;
+  width: string;
+}) {
+  return (
+    <th
+      className={`font-medium text-zinc-400 px-4 py-2.5 ${width} cursor-pointer hover:text-white transition-colors select-none`}
+      onClick={() => onSort(col)}
+    >
+      <div className="flex items-center gap-1">
+        {label}
+        {sortBy === col && (
+          <span className="text-zinc-500">{sortDir === 'asc' ? '↑' : '↓'}</span>
+        )}
+      </div>
+    </th>
+  );
+}
+
 // Helper Functions
 function getDiscoveryQuestions(lead: Lead): string[] {
   const e = lead.enrichment;
@@ -721,10 +1244,27 @@ function InfoRow({ label, value, mono }: { label: string; value?: string; mono?:
 }
 
 function ScriptBlock({ label, text, highlight }: { label: string; text: string; highlight?: boolean }) {
+  const [copied, setCopied] = React.useState(false);
+
   if (!text) return null;
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
   return (
-    <div>
-      <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">{label}</div>
+    <div className="group relative">
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-[10px] text-zinc-500 uppercase tracking-wider">{label}</div>
+        <button
+          onClick={handleCopy}
+          className="opacity-0 group-hover:opacity-100 text-[10px] text-zinc-500 hover:text-white transition-all flex items-center gap-1"
+        >
+          {copied ? <><IconCheck className="w-3 h-3" /> Copied</> : <><IconCopy className="w-3 h-3" /> Copy</>}
+        </button>
+      </div>
       <div className={`text-[13px] ${highlight ? 'text-emerald-400' : 'text-zinc-300'}`}>{text}</div>
     </div>
   );
@@ -812,3 +1352,6 @@ function IconScript({ className = "w-4 h-4" }: IconProps) { return <svg classNam
 function IconUsers({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" /></svg>; }
 function IconRadar({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M12 2a10 10 0 0110 10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" /></svg>; }
 function IconDollar({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" /></svg>; }
+function IconPlus({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>; }
+function IconChat({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>; }
+function IconCopy({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>; }
