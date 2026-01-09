@@ -126,12 +126,13 @@ export default function LeadEngine() {
   return (
     <div className="h-screen flex bg-[#0a0a0a] text-zinc-100 font-['Inter',system-ui,sans-serif]">
       {/* Sidebar */}
-      <aside className="w-56 border-r border-zinc-800/50 flex flex-col">
+      <aside className="w-52 border-r border-zinc-800/50 flex flex-col">
         {/* Logo */}
-        <div className="h-14 flex items-center px-4 border-b border-zinc-800/50">
-          <div className="flex items-center gap-2.5">
-            <span className="font-semibold text-[15px] text-white tracking-tight">RLTX</span>
-            <span className="text-[10px] text-zinc-600 font-medium tracking-widest">LEADS</span>
+        <div className="h-12 flex items-center px-4 border-b border-zinc-800/50">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-[14px] text-white tracking-tight">RLTX</span>
+            <span className="text-[10px] text-zinc-600 font-medium tracking-wider">/</span>
+            <span className="text-[12px] text-zinc-500">leads</span>
           </div>
         </div>
 
@@ -181,47 +182,46 @@ export default function LeadEngine() {
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Top Bar */}
-        <header className="h-14 flex items-center justify-between px-4 border-b border-zinc-800/50">
-          <div className="flex items-center gap-3">
-            <h1 className="text-[15px] font-medium text-white">Leads</h1>
-            <div className="flex items-center bg-zinc-800/50 rounded-md p-0.5">
-              {(['all', 'enriched', 'pending'] as const).map(tab => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`px-2.5 py-1 text-[12px] font-medium rounded transition-colors ${
-                    activeTab === tab ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white'
-                  }`}
-                >
-                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                </button>
-              ))}
-            </div>
+        <header className="h-12 flex items-center px-4 border-b border-zinc-800/50 gap-4">
+          <h1 className="text-[14px] font-medium text-white">Leads</h1>
+
+          <div className="flex items-center bg-zinc-800/50 rounded-md p-0.5">
+            {(['all', 'enriched', 'pending'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-2.5 py-1 text-[12px] font-medium rounded transition-colors ${
+                  activeTab === tab ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white'
+                }`}
+              >
+                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              </button>
+            ))}
           </div>
 
+          <div className="flex-1" />
+
           <div className="flex items-center gap-2">
-            {/* Search */}
-            <div className="relative">
-              <IconSearch className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+            <div className="relative flex items-center">
+              <IconSearch className="absolute left-2.5 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
               <input
                 type="text"
                 placeholder="Search..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-56 bg-zinc-800/50 border border-zinc-700/50 rounded-md pl-8 pr-3 py-1.5 text-[13px] focus:outline-none focus:border-zinc-600 placeholder-zinc-500"
+                className="w-52 h-8 bg-zinc-800/50 border border-zinc-700/50 rounded-md pl-8 pr-8 text-[13px] focus:outline-none focus:border-zinc-600 placeholder-zinc-500"
               />
               {search && (
-                <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white">
+                <button onClick={() => setSearch('')} className="absolute right-2.5 text-zinc-500 hover:text-white">
                   <IconX className="w-3 h-3" />
                 </button>
               )}
             </div>
 
-            {/* Priority Filter */}
             <select
               value={priorityFilter || ''}
               onChange={(e) => setPriorityFilter(e.target.value || null)}
-              className="bg-zinc-800/50 border border-zinc-700/50 rounded-md px-2.5 py-1.5 text-[13px] focus:outline-none focus:border-zinc-600"
+              className="h-8 bg-zinc-800/50 border border-zinc-700/50 rounded-md px-2.5 text-[13px] focus:outline-none focus:border-zinc-600 appearance-none cursor-pointer"
             >
               <option value="">Priority</option>
               {priorities.map(p => <option key={p} value={p}>{p}</option>)}
@@ -306,17 +306,17 @@ export default function LeadEngine() {
       {selectedLead && (
         <aside className="w-[480px] border-l border-zinc-800/50 flex flex-col bg-zinc-900/50">
           {/* Panel Header */}
-          <div className="h-14 flex items-center justify-between px-4 border-b border-zinc-800/50">
+          <div className="h-12 flex items-center justify-between px-4 border-b border-zinc-800/50">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-300 font-semibold text-[13px]">
+              <div className="w-7 h-7 rounded bg-zinc-800 flex items-center justify-center text-zinc-400 font-medium text-[12px]">
                 {selectedLead.company.charAt(0)}
               </div>
               <div className="min-w-0">
-                <div className="font-medium text-white text-[14px] truncate">{selectedLead.company}</div>
+                <div className="font-medium text-white text-[13px] truncate">{selectedLead.company}</div>
                 <div className="text-[11px] text-zinc-500">{selectedLead.sector}</div>
               </div>
             </div>
-            <button onClick={() => setSelectedLead(null)} className="text-zinc-500 hover:text-white p-1">
+            <button onClick={() => setSelectedLead(null)} className="text-zinc-500 hover:text-white p-1 -mr-1">
               <IconX className="w-4 h-4" />
             </button>
           </div>
