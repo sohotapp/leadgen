@@ -121,6 +121,12 @@ importers:
 
   packages/shared:
     dependencies:
+      clsx:
+        specifier: ^2.1.0
+        version: 2.1.1
+      tailwind-merge:
+        specifier: ^2.2.0
+        version: 2.6.0
       zod:
         specifier: ^3.22.4
         version: 3.25.76
