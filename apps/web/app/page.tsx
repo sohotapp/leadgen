@@ -1,9 +1,23 @@
 'use client';
 
 import * as React from 'react';
-import leadsData from '@/data/leads.json';
+import leadsDataJson from '@/data/leads.json';
 
-type Lead = typeof leadsData[0] & {
+type Lead = {
+  id: string;
+  company: string;
+  sector: string;
+  subSector?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  website?: string | null;
+  revenue?: number | null;
+  employees?: number | null;
+  priority?: string;
+  useCase?: string | null;
+  titles?: string | null;
+  source?: string | null;
   enrichedAt?: string;
   enrichment?: EnrichmentData;
 };
@@ -62,7 +76,7 @@ type EnrichmentData = {
 };
 
 export default function LeadEngine() {
-  const [leads, setLeads] = React.useState<Lead[]>(leadsData as Lead[]);
+  const [leads, setLeads] = React.useState<Lead[]>(leadsDataJson as Lead[]);
   const [search, setSearch] = React.useState('');
   const [sectorFilter, setSectorFilter] = React.useState<string | null>(null);
   const [priorityFilter, setPriorityFilter] = React.useState<string | null>(null);
@@ -70,8 +84,27 @@ export default function LeadEngine() {
   const [selectedLead, setSelectedLead] = React.useState<Lead | null>(null);
   const [activeTab, setActiveTab] = React.useState<'all' | 'enriched' | 'pending'>('all');
   const [detailTab, setDetailTab] = React.useState<'overview' | 'callprep' | 'intel'>('overview');
+  const [dataSource, setDataSource] = React.useState<'loading' | 'supabase' | 'json'>('loading');
 
-  const sectors = [...new Set(leadsData.map(l => l.sector))].sort();
+  // Fetch leads from Supabase on mount
+  React.useEffect(() => {
+    async function fetchLeads() {
+      try {
+        const res = await fetch('/api/leads');
+        const data = await res.json();
+        if (data.success && data.data) {
+          setLeads(data.data);
+          setDataSource(data.source || 'json');
+        }
+      } catch (error) {
+        console.error('Failed to fetch leads:', error);
+        setDataSource('json');
+      }
+    }
+    fetchLeads();
+  }, []);
+
+  const sectors = [...new Set(leads.map(l => l.sector))].sort();
   const priorities = ['Critical', 'High', 'Medium', 'Low'];
 
   const filteredLeads = React.useMemo(() => {
@@ -724,7 +757,7 @@ function NavItem({ icon, label, active, count, onClick }: { icon: React.ReactNod
   );
 }
 
-function PriorityPill({ priority }: { priority: string }) {
+function PriorityPill({ priority = 'Medium' }: { priority?: string }) {
   const colors: Record<string, string> = {
     Critical: 'bg-red-500/15 text-red-400',
     High: 'bg-orange-500/15 text-orange-400',
@@ -763,18 +796,19 @@ function Spinner() {
   );
 }
 
-// Icons
-function IconDatabase() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /></svg>; }
-function IconSparkles() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>; }
-function IconClock() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>; }
-function IconSearch() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>; }
-function IconX() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>; }
-function IconCheck() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>; }
-function IconQuote() { return <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z" /></svg>; }
-function IconTarget() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" /></svg>; }
-function IconQuestion() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></svg>; }
-function IconShield() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>; }
-function IconScript() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" /></svg>; }
-function IconUsers() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" /></svg>; }
-function IconRadar() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M12 2a10 10 0 0110 10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" /></svg>; }
-function IconDollar() { return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" /></svg>; }
+// Icons - all accept className prop for flexibility
+type IconProps = { className?: string };
+function IconDatabase({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /></svg>; }
+function IconSparkles({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>; }
+function IconClock({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>; }
+function IconSearch({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>; }
+function IconX({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>; }
+function IconCheck({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>; }
+function IconQuote({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="currentColor" viewBox="0 0 24 24"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z" /></svg>; }
+function IconTarget({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" /></svg>; }
+function IconQuestion({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></svg>; }
+function IconShield({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>; }
+function IconScript({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" /></svg>; }
+function IconUsers({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" /></svg>; }
+function IconRadar({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M12 2a10 10 0 0110 10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" /></svg>; }
+function IconDollar({ className = "w-4 h-4" }: IconProps) { return <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" /></svg>; }

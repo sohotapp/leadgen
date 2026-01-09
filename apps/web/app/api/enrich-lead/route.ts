@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import { createClient } from '@supabase/supabase-js';
 
 const anthropic = new Anthropic();
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
+
+const supabase = supabaseUrl && supabaseServiceKey
+  ? createClient(supabaseUrl, supabaseServiceKey, { auth: { persistSession: false } })
+  : null;
 
 const RLTX_CONTEXT = `
 # RLTX.AI - COMPANY CONTEXT
@@ -171,11 +179,30 @@ Think step by step. Be specific to this exact company, not generic. Use your kno
       enrichedData = { rawResponse: content.text };
     }
 
+    const enrichedAt = new Date().toISOString();
+
+    // Save to Supabase if available
+    if (supabase) {
+      try {
+        await supabase
+          .from('leads')
+          .update({
+            enrichment: enrichedData,
+            enriched_at: enrichedAt,
+            priority: enrichedData.score?.overallPriority || lead.priority,
+            updated_at: enrichedAt
+          })
+          .eq('id', lead.id);
+      } catch (saveError) {
+        console.error('Failed to save to Supabase:', saveError);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       leadId: lead.id,
       company: lead.company,
-      enrichedAt: new Date().toISOString(),
+      enrichedAt,
       tokensUsed: response.usage.input_tokens + response.usage.output_tokens,
       data: enrichedData,
     });

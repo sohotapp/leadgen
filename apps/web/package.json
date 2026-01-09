@@ -9,10 +9,11 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@lead-engine/db": "workspace:*",
-    "@lead-engine/ui": "workspace:*",
-    "@lead-engine/shared": "workspace:*",
     "@anthropic-ai/sdk": "^0.24.0",
+    "@lead-engine/db": "workspace:*",
+    "@lead-engine/shared": "workspace:*",
+    "@lead-engine/ui": "workspace:*",
+    "@supabase/supabase-js": "^2.90.1",
     "@tanstack/react-query": "^5.17.0",
     "@tanstack/react-table": "^8.11.0",
     "@tanstack/react-virtual": "^3.0.1",
