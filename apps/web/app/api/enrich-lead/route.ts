@@ -119,6 +119,8 @@ Return a JSON object with these exact fields:
     "targetTitles": ["Best titles to reach out to"],
     "emailPatterns": ["firstname.lastname@domain.com", "flastname@domain.com"],
     "linkedInUrl": "https://linkedin.com/company/...",
+    "companyPhone": "Main company phone number if known (format: +1-XXX-XXX-XXXX)",
+    "genericEmail": "Generic contact email if known (e.g., info@company.com, sales@company.com)",
     "decisionProcess": "How decisions are likely made (committee, single buyer, etc.)"
   },
 
@@ -184,12 +186,30 @@ Think step by step. Be specific to this exact company, not generic. Use your kno
     // Save to Supabase if available
     if (supabase) {
       try {
+        // Extract contact info from enrichment
+        const contactData = enrichedData.contacts || {};
+        const email = contactData.genericEmail || null;
+        const phone = contactData.companyPhone || null;
+        const linkedin = contactData.linkedInUrl || null;
+
+        // Extract product fit from enrichment
+        const productFit = enrichedData.rltxFit?.primaryProduct || null;
+        const fitScore = enrichedData.score?.fitScore ?
+          Math.round(enrichedData.score.fitScore * 10) : null; // Convert 1-10 to 10-100
+
         await supabase
           .from('leads')
           .update({
             enrichment: enrichedData,
             enriched_at: enrichedAt,
             priority: enrichedData.score?.overallPriority || lead.priority,
+            // Contact fields
+            email: email,
+            phone: phone,
+            linkedin: linkedin,
+            // Product fit fields
+            product_fit: productFit,
+            fit_score: fitScore,
             updated_at: enrichedAt
           })
           .eq('id', lead.id);
@@ -198,6 +218,9 @@ Think step by step. Be specific to this exact company, not generic. Use your kno
       }
     }
 
+    // Extract contact info for response
+    const contactData = enrichedData.contacts || {};
+
     return NextResponse.json({
       success: true,
       leadId: lead.id,
@@ -205,6 +228,14 @@ Think step by step. Be specific to this exact company, not generic. Use your kno
       enrichedAt,
       tokensUsed: response.usage.input_tokens + response.usage.output_tokens,
       data: enrichedData,
+      // Direct contact fields for immediate UI update
+      contactInfo: {
+        email: contactData.genericEmail || null,
+        phone: contactData.companyPhone || null,
+        linkedin: contactData.linkedInUrl || null,
+      },
+      productFit: enrichedData.rltxFit?.primaryProduct || null,
+      fitScore: enrichedData.score?.fitScore ? Math.round(enrichedData.score.fitScore * 10) : null,
     });
   } catch (error) {
     console.error('Enrich error:', error);

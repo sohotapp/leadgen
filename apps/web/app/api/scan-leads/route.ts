@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
-
-const anthropic = new Anthropic();
+import {
+  scoreAndSortLeads,
+  groupByProduct,
+  groupByTier,
+  getActionItems,
+  getTopByProduct,
+  calculatePipelineStats,
+  type ScoredLead,
+} from '@/lib/lead-scoring';
+import { SECTOR_TAXONOMY, PRODUCT_INFO } from '@/lib/sector-config';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
@@ -10,100 +17,6 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = supabaseUrl && supabaseServiceKey
   ? createClient(supabaseUrl, supabaseServiceKey, { auth: { persistSession: false } })
   : null;
-
-// RLTX target criteria
-const RLTX_CRITERIA = {
-  hotSectors: [
-    'defense', 'military', 'intelligence', 'national security',
-    'financial services', 'banking', 'hedge fund', 'asset management',
-    'healthcare', 'pharmaceutical', 'biotech',
-    'ai', 'artificial intelligence', 'machine learning',
-    'consulting', 'research', 'analytics',
-    'government', 'federal', 'contractor'
-  ],
-  hotKeywords: [
-    'simulation', 'modeling', 'forecasting', 'prediction',
-    'decision', 'intelligence', 'analytics', 'research',
-    'defense', 'security', 'risk', 'strategy'
-  ],
-  revenueThresholds: {
-    enterprise: 1, // $1B+
-    midMarket: 0.1, // $100M+
-  },
-  employeeThresholds: {
-    enterprise: 5000,
-    midMarket: 500,
-  }
-};
-
-// Quick score without AI (instant)
-function quickScore(lead: any): { score: number; reasons: string[]; tier: string } {
-  let score = 0;
-  const reasons: string[] = [];
-
-  const sector = (lead.sector || '').toLowerCase();
-  const useCase = (lead.useCase || lead.use_case || '').toLowerCase();
-  const company = (lead.company || '').toLowerCase();
-
-  // Sector matching
-  for (const hot of RLTX_CRITERIA.hotSectors) {
-    if (sector.includes(hot) || useCase.includes(hot) || company.includes(hot)) {
-      score += 15;
-      reasons.push(`Hot sector: ${hot}`);
-      break;
-    }
-  }
-
-  // Keyword matching
-  for (const kw of RLTX_CRITERIA.hotKeywords) {
-    if (useCase.includes(kw)) {
-      score += 10;
-      reasons.push(`Keyword: ${kw}`);
-    }
-  }
-
-  // Revenue scoring
-  const revenue = lead.revenue || 0;
-  if (revenue >= RLTX_CRITERIA.revenueThresholds.enterprise) {
-    score += 25;
-    reasons.push(`Enterprise revenue: $${revenue}B`);
-  } else if (revenue >= RLTX_CRITERIA.revenueThresholds.midMarket) {
-    score += 15;
-    reasons.push(`Mid-market revenue: $${revenue}B`);
-  }
-
-  // Employee scoring
-  const employees = lead.employees || 0;
-  if (employees >= RLTX_CRITERIA.employeeThresholds.enterprise) {
-    score += 20;
-    reasons.push(`Enterprise size: ${employees.toLocaleString()} employees`);
-  } else if (employees >= RLTX_CRITERIA.employeeThresholds.midMarket) {
-    score += 10;
-    reasons.push(`Mid-market size: ${employees.toLocaleString()} employees`);
-  }
-
-  // Source quality
-  const source = (lead.source || '').toLowerCase();
-  if (source.includes('fortune') || source.includes('sp500') || source.includes('f500')) {
-    score += 15;
-    reasons.push('Fortune 500 source');
-  } else if (source.includes('defense') || source.includes('federal') || source.includes('contractor')) {
-    score += 20;
-    reasons.push('Defense/Federal source');
-  }
-
-  // Priority boost
-  if (lead.priority === 'Critical') score += 10;
-  else if (lead.priority === 'High') score += 5;
-
-  // Determine tier
-  let tier = 'Low';
-  if (score >= 60) tier = 'Hot';
-  else if (score >= 40) tier = 'Warm';
-  else if (score >= 20) tier = 'Medium';
-
-  return { score: Math.min(score, 100), reasons, tier };
-}
 
 export async function GET(request: NextRequest) {
   try {
@@ -129,52 +42,89 @@ export async function GET(request: NextRequest) {
       leads = leadsJson;
     }
 
-    // Score all leads
-    const scoredLeads = leads.map(lead => {
-      const { score, reasons, tier } = quickScore(lead);
-      return {
-        id: lead.id,
-        company: lead.company,
-        sector: lead.sector,
-        revenue: lead.revenue,
-        employees: lead.employees,
-        score,
-        tier,
-        reasons,
-        enriched: !!lead.enrichment || !!lead.enriched_at,
-        priority: lead.priority,
-      };
-    });
+    // Transform leads for scoring
+    const leadsForScoring = leads.map(lead => ({
+      id: lead.id,
+      company: lead.company,
+      sector: lead.sector,
+      subSector: lead.sub_sector || lead.subSector || null,
+      useCase: lead.use_case || lead.useCase || null,
+      revenue: lead.revenue,
+      employees: lead.employees,
+      source: lead.source,
+      priority: lead.priority,
+      enrichment: lead.enrichment,
+      enriched_at: lead.enriched_at,
+    }));
 
-    // Sort by score descending
-    scoredLeads.sort((a, b) => b.score - a.score);
+    // Score all leads using new scoring engine
+    const scoredLeads = scoreAndSortLeads(leadsForScoring);
+
+    // Group by product
+    const byProduct = groupByProduct(scoredLeads);
+
+    // Group by tier
+    const byTier = groupByTier(scoredLeads);
+
+    // Get action items
+    const actionItems = getActionItems(scoredLeads);
+
+    // Get top leads per product
+    const topByProduct = getTopByProduct(scoredLeads);
 
     // Calculate stats
-    const stats = {
-      total: leads.length,
-      enriched: scoredLeads.filter(l => l.enriched).length,
-      pending: scoredLeads.filter(l => !l.enriched).length,
-      byTier: {
-        hot: scoredLeads.filter(l => l.tier === 'Hot').length,
-        warm: scoredLeads.filter(l => l.tier === 'Warm').length,
-        medium: scoredLeads.filter(l => l.tier === 'Medium').length,
-        low: scoredLeads.filter(l => l.tier === 'Low').length,
-      },
-      topSectors: Object.entries(
-        leads.reduce((acc: any, l: any) => {
-          acc[l.sector] = (acc[l.sector] || 0) + 1;
-          return acc;
-        }, {})
-      ).sort((a: any, b: any) => b[1] - a[1]).slice(0, 10),
+    const stats = calculatePipelineStats(scoredLeads);
+
+    // Get sector distribution
+    const sectorCounts = leads.reduce((acc: Record<string, number>, l: any) => {
+      const sector = l.sector || 'Other';
+      acc[sector] = (acc[sector] || 0) + 1;
+      return acc;
+    }, {});
+
+    const topSectors = Object.entries(sectorCounts)
+      .sort((a, b) => (b[1] as number) - (a[1] as number))
+      .slice(0, 15);
+
+    // Get sub-sector distribution for each product
+    const subSectorsByProduct: Record<string, Record<string, number>> = {
+      FORESIGHT: {},
+      VERITAS: {},
+      POPULOUS: {},
     };
+
+    for (const lead of scoredLeads) {
+      const product = lead.productFit.primaryProduct;
+      const subSector = lead.subSector || 'Unclassified';
+      subSectorsByProduct[product][subSector] = (subSectorsByProduct[product][subSector] || 0) + 1;
+    }
 
     return NextResponse.json({
       success: true,
       source,
       stats,
-      hotLeads: scoredLeads.filter(l => l.tier === 'Hot').slice(0, 20),
-      warmLeads: scoredLeads.filter(l => l.tier === 'Warm').slice(0, 20),
-      allScored: scoredLeads,
+      actionItems: actionItems.map(a => ({
+        action: a.action,
+        count: a.count,
+        priority: a.priority,
+      })),
+      topByProduct,
+      byProduct: {
+        FORESIGHT: byProduct.FORESIGHT.slice(0, 20),
+        VERITAS: byProduct.VERITAS.slice(0, 20),
+        POPULOUS: byProduct.POPULOUS.slice(0, 20),
+      },
+      byTier: {
+        hot: byTier.Hot.slice(0, 30),
+        warm: byTier.Warm.slice(0, 30),
+        medium: byTier.Medium.slice(0, 20),
+      },
+      hotLeads: byTier.Hot.slice(0, 30),
+      warmLeads: byTier.Warm.slice(0, 30),
+      topSectors,
+      subSectorsByProduct,
+      productInfo: PRODUCT_INFO,
+      allScored: scoredLeads.slice(0, 100), // Limit for performance
     });
   } catch (error) {
     console.error('Scan error:', error);
@@ -185,10 +135,10 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST: Auto-enrich top leads
+// POST: Get leads to enrich
 export async function POST(request: NextRequest) {
   try {
-    const { count = 5 } = await request.json();
+    const { count = 5, product } = await request.json();
 
     // Get unenriched leads
     let leads: any[] = [];
@@ -199,7 +149,7 @@ export async function POST(request: NextRequest) {
         .select('*')
         .is('enrichment', null)
         .order('company')
-        .limit(100);
+        .limit(200);
 
       if (data) leads = data;
     }
@@ -208,35 +158,53 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         message: 'No unenriched leads found',
-        enriched: 0,
+        leads: [],
       });
     }
 
-    // Score and get top N
-    const scoredLeads = leads.map(lead => ({
-      ...lead,
-      ...quickScore(lead),
+    // Transform and score
+    const leadsForScoring = leads.map(lead => ({
+      id: lead.id,
+      company: lead.company,
+      sector: lead.sector,
+      subSector: lead.sub_sector || null,
+      useCase: lead.use_case || null,
+      revenue: lead.revenue,
+      employees: lead.employees,
+      source: lead.source,
+      priority: lead.priority,
+      enrichment: null,
+      enriched_at: null,
     }));
 
-    scoredLeads.sort((a, b) => b.score - a.score);
-    const toEnrich = scoredLeads.slice(0, Math.min(count, 10));
+    let scoredLeads = scoreAndSortLeads(leadsForScoring);
 
-    // This would trigger enrichment - for now just return the list
+    // Filter by product if specified
+    if (product && ['FORESIGHT', 'VERITAS', 'POPULOUS'].includes(product)) {
+      scoredLeads = scoredLeads.filter(l => l.productFit.primaryProduct === product);
+    }
+
+    // Get top N
+    const toEnrich = scoredLeads.slice(0, Math.min(count, 20));
+
     return NextResponse.json({
       success: true,
       message: `Found ${toEnrich.length} leads to enrich`,
       leads: toEnrich.map(l => ({
         id: l.id,
         company: l.company,
+        sector: l.sector,
+        subSector: l.subSector,
         score: l.score,
         tier: l.tier,
+        productFit: l.productFit,
         reasons: l.reasons,
       })),
     });
   } catch (error) {
     console.error('Auto-enrich error:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to auto-enrich' },
+      { success: false, error: 'Failed to find leads to enrich' },
       { status: 500 }
     );
   }
